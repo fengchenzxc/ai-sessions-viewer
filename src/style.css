@@ -54,10 +54,14 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --titlebar-h: 40px;
-  --traffic-lights-w: 78px;
+  --traffic-lights-w: 0px;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter',
     'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
   font-feature-settings: 'cv11', 'ss01', 'ss03';
+}
+
+:root.is-macos {
+  --traffic-lights-w: 78px;
 }
 
 /* ---------- Dark ---------- */

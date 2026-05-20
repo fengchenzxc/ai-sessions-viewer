@@ -1353,17 +1353,62 @@ fn resume_session(agent: String, session_id: String, cwd: String) -> Result<(), 
         "codex" => format!("codex resume {session_id}"),
         _ => format!("claude --resume {session_id}"),
     };
-    // 在终端里 cd 到项目目录再执行 resume 命令。
-    let cwd_quoted = cwd.replace('\'', "'\\''");
-    let shell_cmd = format!("cd '{cwd_quoted}' && {cli}");
-    let as_arg = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
-    let script =
-        format!("tell application \"Terminal\"\nactivate\ndo script \"{as_arg}\"\nend tell");
-    std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .spawn()
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let cwd_quoted = cwd.replace('\'', "'\\''");
+        let shell_cmd = format!("cd '{cwd_quoted}' && {cli}");
+        let as_arg = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script =
+            format!("tell application \"Terminal\"\nactivate\ndo script \"{as_arg}\"\nend tell");
+        std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("启动终端失败: {e}"))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let cwd_win = cwd.replace('/', "\\");
+        let ps_cmd = format!("Set-Location \"{}\"; {}", cwd_win, cli);
+        let launched = std::process::Command::new("cmd")
+            .args(["/c", "start", "powershell", "-NoExit", "-Command", &ps_cmd])
+            .spawn()
+            .is_ok();
+        if !launched {
+            std::process::Command::new("cmd")
+                .args(["/c", "start", "cmd", "/k", &format!("cd /d \"{}\" && {}", cwd_win, cli)])
+                .spawn()
+                .map_err(|e| format!("启动终端失败: {e}"))?;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let shell_cmd = format!("cd '{}' && {}", cwd.replace('\'', "'\\''"), cli);
+        let terminals = ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"];
+        let mut launched = false;
+        for term in &terminals {
+            let result = if *term == "gnome-terminal" {
+                std::process::Command::new(term)
+                    .args(["--", "bash", "-c", &shell_cmd])
+                    .spawn()
+            } else {
+                std::process::Command::new(term)
+                    .args(["-e", &format!("bash -c '{}'", shell_cmd.replace('\'', "'\\''"))])
+                    .spawn()
+            };
+            if result.is_ok() {
+                launched = true;
+                break;
+            }
+        }
+        if !launched {
+            return Err("未找到可用的终端程序".to_string());
+        }
+    }
+
     Ok(())
 }
 
@@ -1392,14 +1437,35 @@ fn check_update() -> Result<UpdateInfo, String> {
     })
 }
 
-/// 在访达中显示该文件。
+/// 在系统文件管理器中显示该文件。
 #[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
-    std::process::Command::new("open")
-        .arg("-R")
-        .arg(&path)
-        .spawn()
-        .map_err(|e| format!("打开访达失败: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开访达失败: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.replace('/', "\\")))
+            .spawn()
+            .map_err(|e| format!("打开资源管理器失败: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(path);
+        std::process::Command::new("xdg-open")
+            .arg(&parent)
+            .spawn()
+            .map_err(|e| format!("打开文件管理器失败: {e}"))?;
+    }
     Ok(())
 }
 
