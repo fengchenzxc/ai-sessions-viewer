@@ -30,10 +30,11 @@ The app is **read-only** against the originals — deletion is a soft move into 
 - 🗂 **Unified project view** — group sessions by working directory across both CLIs
 - 💬 **Faithful chat replay** — text, thinking blocks, tool calls, structured diffs, inline images
 - 🔎 **In-session search with scope** — search across the whole conversation or scope to user messages, agent replies (incl. edits), or tool noise; prev / next jump + match counter
+- 🔃 **Session list search & sort** — filter a project's sessions by keyword (with match highlighting), sort by recency / size / message count, or show only ones with an ID
 - 🪗 **Collapse / expand all tool calls** — one click to hide tool-call clutter and focus on the conversation
 - 📤 **Export session** — save a single session to Markdown or HTML (native Save-As, offline-renderable HTML with inlined avatars / styles)
-- 🔄 **One-click resume** — opens Terminal, `cd`s into the project, runs `claude --resume <id>` / `codex resume <id>`
-- 🗑 **Shared trash with undo** — soft-delete + restore, survives across both agents
+- 🔄 **Resume or start fresh** — open Terminal in a project to resume an existing session (`claude --resume <id>` / `codex resume <id>`) or start a brand-new one
+- 🗑 **Shared trash** — soft-delete, preview a deleted session's transcript, restore one or many (multi-select); survives across both agents
 - 📌 **Pin / sink projects** — color-coded pins on the sidebar; sunk projects go to the bottom
 - ✏️ **Rename sessions** — your new title syncs back to the CLI, so `claude` / `codex` resume pickers show it too
 - 🌗 **Light / dark / system theme** — Codex-inspired neutral palette with brand-color accents
@@ -93,11 +94,15 @@ See [`CLAUDE.md`](CLAUDE.md) for architecture notes aimed at contributors and [`
 ## Roadmap
 
 - [ ] Gemini CLI session support (next)
-- [ ] Keyboard shortcuts (per-OS conventions: ⌘ on macOS, Ctrl on Windows / Linux)
-- [ ] Native application menu (macOS menu bar / Windows & Linux window menu)
-- [ ] Linux build target
-- [ ] Full-text search across sessions
-- [ ] Tauri auto-updater
+- [ ] Token usage & cost analytics — per-message / per-session / per-project
+- [ ] Stats overview dashboard — activity, model & token breakdown
+- [ ] Full-text search across all sessions
+- [ ] Session favorites & tags
+- [ ] Live tail — auto-refresh an in-progress session
+- [ ] Batch export / delete — _multi-select restore shipped; batch export / delete still pending_
+- [ ] Keyboard shortcuts & native application menu — _⌘F / Ctrl+F search done; native menu pending_
+- [ ] Linux build target (+ Homebrew / AppImage)
+- [ ] Tauri auto-updater — _manual "Check for updates" shipped; silent auto-update pending_
 
 ## Contributing
 

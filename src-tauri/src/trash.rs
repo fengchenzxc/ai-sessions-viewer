@@ -89,6 +89,7 @@ pub fn list() -> Result<Vec<TrashItem>, String> {
             agent,
             project_label,
             original_path,
+            trash_path: fp.to_string_lossy().to_string(),
             deleted_at,
             title,
             size: fs::metadata(&fp).map(|m| m.len()).unwrap_or(0),

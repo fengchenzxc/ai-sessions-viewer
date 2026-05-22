@@ -4,7 +4,7 @@
 // 才出现、字号小、深浅模式无法跟随。
 import type { Directive } from 'vue'
 
-type Placement = 'top' | 'bottom' | 'auto'
+type Placement = 'top' | 'bottom' | 'right' | 'auto'
 
 interface BindData {
   text: string
@@ -41,6 +41,26 @@ function showFor(target: HTMLElement, text: string, placement: Placement) {
   const rect = el.getBoundingClientRect()
   const gap = 6
   const margin = 6
+
+  // 'right'：浮在目标右侧、垂直居中；右侧放不下则翻到左侧
+  if (placement === 'right') {
+    let left = targetRect.right + gap
+    if (left + rect.width + margin > window.innerWidth) {
+      left = targetRect.left - rect.width - gap
+    }
+    left = Math.max(margin, left)
+    let top = targetRect.top + targetRect.height / 2 - rect.height / 2
+    top = Math.max(
+      margin,
+      Math.min(window.innerHeight - rect.height - margin, top),
+    )
+    el.style.left = `${Math.round(left)}px`
+    el.style.top = `${Math.round(top)}px`
+    el.dataset.placement = 'right'
+    requestAnimationFrame(() => el.classList.add('is-visible'))
+    return
+  }
+
   // 'top' / 'bottom' 强制方向；'auto' 默认朝下，碰到下边界再翻到上
   let placeAbove =
     placement === 'top'
@@ -119,7 +139,7 @@ function unbind(el: HTMLElement) {
 }
 
 function readPlacement(arg: string | undefined): Placement {
-  return arg === 'top' || arg === 'bottom' ? arg : 'auto'
+  return arg === 'top' || arg === 'bottom' || arg === 'right' ? arg : 'auto'
 }
 
 export const vTooltip: Directive<HTMLElement, string | undefined | null> = {

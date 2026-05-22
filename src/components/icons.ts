@@ -7,6 +7,7 @@ import IconPinUpRaw from '~icons/lucide/arrow-up-to-line'
 import IconPinDownRaw from '~icons/lucide/arrow-down-to-line'
 import IconTrashRaw from '~icons/lucide/trash-2'
 import IconTrashOpenRaw from '~icons/quill/folder-trash'
+import IconRestoreRaw from '~icons/lucide/archive-restore'
 import IconSettingsRaw from '~icons/lucide/settings'
 import IconPlayRaw from '~icons/lucide/play'
 import IconChatRaw from '~icons/lucide/message-circle'
@@ -39,6 +40,12 @@ import IconUnfoldRaw from '~icons/lucide/chevrons-up-down'
 import IconDownloadRaw from '~icons/lucide/download'
 import IconMarkdownRaw from '~icons/lucide/file-text'
 import IconHtmlRaw from '~icons/lucide/file-code'
+import IconSortRaw from '~icons/lucide/arrow-down-up'
+import IconSelectRaw from '~icons/lucide/list-checks'
+import IconHashRaw from '~icons/lucide/hash'
+import IconPlusRaw from '~icons/lucide/plus'
+import IconHistoryRaw from '~icons/lucide/history'
+import IconGithubRaw from '~icons/lucide/github'
 import IconClaudeRaw from '~icons/material-icon-theme/claude'
 import IconCodexRaw from '~icons/arcticons/openai-chatgpt'
 
@@ -46,6 +53,7 @@ export const IconPinUp = IconPinUpRaw
 export const IconPinDown = IconPinDownRaw
 export const IconTrash = IconTrashRaw
 export const IconTrashOpen = IconTrashOpenRaw
+export const IconRestore = IconRestoreRaw
 export const IconSettings = IconSettingsRaw
 export const IconPlay = IconPlayRaw
 export const IconChat = IconChatRaw
@@ -78,6 +86,12 @@ export const IconUnfold = IconUnfoldRaw
 export const IconDownload = IconDownloadRaw
 export const IconMarkdown = IconMarkdownRaw
 export const IconHtml = IconHtmlRaw
+export const IconSort = IconSortRaw
+export const IconSelect = IconSelectRaw
+export const IconHash = IconHashRaw
+export const IconPlus = IconPlusRaw
+export const IconHistory = IconHistoryRaw
+export const IconGithub = IconGithubRaw
 // 「已 pin」状态的小圆点指示器；6×6 实心圆，自己拼比拉一整个集合便宜。
 import { defineComponent, h, type Component } from 'vue'
 import type { Agent } from '../types'

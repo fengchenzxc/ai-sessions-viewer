@@ -6,21 +6,24 @@ import { shortName } from './format'
 import { t } from './i18n'
 import { clearAppCache } from './settings'
 import { resetChatToolbar } from './chatToolbar'
+import { resetTrashToolbar, exitSelectMode, selectedTrash } from './trashToolbar'
+import { resetSessionsToolbar, sessionsFilterActive } from './sessionsToolbar'
 import { exportMarkdown, exportHtml } from './export'
+import { fly } from './fly'
+import { recordRecent } from './recents'
 import ChatView from './views/ChatView.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import ChatTopbar from './components/topbar/ChatTopbar.vue'
 import TrashTopbar from './components/topbar/TrashTopbar.vue'
 import SessionsTopbar from './components/topbar/SessionsTopbar.vue'
-import EmptyTopbar from './components/topbar/EmptyTopbar.vue'
 import TrashView from './views/TrashView.vue'
 import SessionsView from './views/SessionsView.vue'
+import WelcomeView from './views/WelcomeView.vue'
 import Sidebar from './components/Sidebar.vue'
 import SidebarTopbar from './components/SidebarTopbar.vue'
 import ConfirmModal from './modals/ConfirmModal.vue'
 import RenameModal from './modals/RenameModal.vue'
 import ProjectContextMenu from './modals/ProjectContextMenu.vue'
-import { IconEmptyBox } from './components/icons'
 
 // ---------- 状态 ----------
 const agent = ref<Agent>('claude')
@@ -99,6 +102,8 @@ const loadingList = ref(false)
 const PAGE_SIZE = 40
 
 const openSession = ref<SessionMeta | null>(null)
+// 非空表示当前打开的会话来自回收站（只读查看）—— 详情页据此切换为「回收站模式」。
+const openTrashItem = ref<TrashItem | null>(null)
 const chatMsgs = ref<Msg[]>([])
 const loadingChat = ref(false)
 
@@ -112,6 +117,8 @@ watch(openSession, (val, old) => {
   // 切换 / 关闭会话时把聊天页顶栏（搜索 / 折叠 / 等）状态归零，
   // 否则前一个会话的搜索词 / 折叠态会留到下一个，体验古怪。
   if (val?.path !== old?.path) resetChatToolbar()
+  // 关闭会话即退出回收站模式 —— openTrashItem 永远不残留到下一次打开。
+  if (!val) openTrashItem.value = null
   if (!val && old) {
     nextTick(() => {
       if (listScrollEl.value) listScrollEl.value.scrollTop = savedListScroll
@@ -122,7 +129,8 @@ watch(openSession, (val, old) => {
 const activeProject = computed(() =>
   projects.value.find((p) => p.dirName === activeDir.value),
 )
-const agentName = computed(() => (agent.value === 'codex' ? 'Codex' : 'Claude'))
+// 详情页用的 agent：回收站会话用条目自己的 agent（可能与当前侧栏 agent 不同）。
+const chatAgent = computed<Agent>(() => openTrashItem.value?.agent ?? agent.value)
 
 // ---------- 项目置顶 / 沉底偏好（持久化到 localStorage）----------
 type ProjState = 'pinned' | 'sunk'
@@ -189,10 +197,19 @@ function ctxRefresh() {
   closeCtxMenu()
   refreshAll()
 }
-async function ctxDeleteProject() {
+function ctxDeleteProject() {
   const p = ctxMenu.value?.project
   closeCtxMenu()
   if (!p) return
+  deleteProject(p)
+}
+
+// 删除当前打开的项目 —— SessionsView 顶部操作区的删除按钮。
+function deleteActiveProject() {
+  if (activeProject.value) deleteProject(activeProject.value)
+}
+
+function deleteProject(p: ProjectInfo) {
   ask({
     title: t('dialog.deleteProject.title'),
     message: t('dialog.deleteProject.body', {
@@ -202,6 +219,8 @@ async function ctxDeleteProject() {
     okText: t('dialog.deleteProject.ok'),
     danger: true,
     onOk: async () => {
+      // 在该项目从侧边栏移除前抓取起点，触发飞向回收站的弧线动画
+      const srcRect = projectSourceRect(p)
       try {
         // 把该项目所有会话分页拉出来，再逐个软删；trash 里仍可逐个恢复
         const all: SessionMeta[] = []
@@ -217,12 +236,19 @@ async function ctxDeleteProject() {
             await api.softDeleteSession(agent.value, s.path, p.displayPath)
           } catch {}
         }
+        fly({
+          from: srcRect,
+          to: document.querySelector<HTMLElement>('.topbar-trash-btn'),
+          variant: 'trash',
+        })
         if (activeDir.value === p.dirName) {
           activeDir.value = null
           sessions.value = []
           openSession.value = null
         }
         await loadProjects()
+        // 批量删除后刷新回收站，保持顶栏红点准确
+        api.listTrash().then((items) => { trash.value = items }).catch(() => {})
         notify(t('toast.projDeleted'))
       } catch (e) {
         notify(t('toast.deleteFail', { e: String(e) }), true)
@@ -352,12 +378,23 @@ function switchAgent(a: Agent) {
 }
 
 async function selectProject(dir: string) {
+  // 再次点击当前已选中的项目 → 收起，回到「请选择项目」空状态
+  if (activeDir.value === dir && !showTrash.value) {
+    activeDir.value = null
+    openSession.value = null
+    sessions.value = []
+    sessionTotal.value = 0
+    resetSessionsToolbar()
+    return
+  }
   showTrash.value = false
   activeDir.value = dir
+  recordRecent(agent.value, dir)
   openSession.value = null
   sessions.value = []
   sessionTotal.value = 0
   savedListScroll = 0
+  resetSessionsToolbar()
   loadingList.value = true
   try {
     const page = await api.listSessions(agent.value, dir, 0, PAGE_SIZE)
@@ -395,10 +432,57 @@ function onListScroll(scrollTop: number) {
   savedListScroll = scrollTop
 }
 
+// 一次性把当前项目剩余的会话全部拉进来。分页窗口只覆盖已滚动到的部分，
+// 而搜索 / 排序需要面向整个项目才正确，故工具栏一旦被激活就补齐全量。
+async function loadAllSessions() {
+  if (!activeDir.value || loadingList.value || loadingMore.value) return
+  if (sessions.value.length >= sessionTotal.value) return
+  loadingMore.value = true
+  try {
+    const page = await api.listSessions(
+      agent.value,
+      activeDir.value,
+      0,
+      sessionTotal.value,
+    )
+    sessions.value = page.sessions
+    sessionTotal.value = page.total
+  } catch (e) {
+    notify(t('toast.loadMoreFail', { e: String(e) }), true)
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+// 工具栏从默认态切到「有筛选」时补齐全量会话；清空筛选后已加载的全量列表保留即可。
+watch(sessionsFilterActive, (active) => {
+  if (active) loadAllSessions()
+})
+
+async function refreshSessions() {
+  if (!activeDir.value || loadingList.value) return
+  loadingList.value = true
+  try {
+    const page = await api.listSessions(
+      agent.value,
+      activeDir.value,
+      0,
+      Math.max(PAGE_SIZE, sessions.value.length),
+    )
+    sessions.value = page.sessions
+    sessionTotal.value = page.total
+  } catch (e) {
+    notify(t('toast.loadSessionsFail', { e: String(e) }), true)
+  } finally {
+    loadingList.value = false
+  }
+}
+
 async function loadTrash() {
   showTrash.value = true
   activeDir.value = null
   openSession.value = null
+  resetTrashToolbar()
   loadingList.value = true
   try {
     trash.value = await api.listTrash()
@@ -412,6 +496,7 @@ async function loadTrash() {
 
 async function openChat(s: SessionMeta) {
   loadingChat.value = true
+  openTrashItem.value = null
   openSession.value = s
   chatMsgs.value = []
   try {
@@ -424,23 +509,94 @@ async function openChat(s: SessionMeta) {
   }
 }
 
+// 在回收站里打开一个已删除会话的只读详情。回收站 JSONL 仍是完整文件，
+// 直接按 trashPath 解析即可；详情页通过 openTrashItem 进入「回收站模式」。
+async function openTrashSession(item: TrashItem) {
+  loadingChat.value = true
+  openTrashItem.value = item
+  openSession.value = {
+    id: '',
+    fileName: item.trashFile,
+    path: item.trashPath,
+    title: item.title,
+    modified: item.deletedAt,
+    size: item.size,
+    messageCount: 0,
+  }
+  chatMsgs.value = []
+  try {
+    chatMsgs.value = await api.readSession(item.agent, item.trashPath)
+  } catch (e) {
+    notify(t('toast.readFail', { e: String(e) }), true)
+    openSession.value = null
+  } finally {
+    loadingChat.value = false
+  }
+}
+
 // ---------- 删除 / 恢复 ----------
+// 删除起点矩形：列表里取对应 .session-card，详情页取聊天顶栏的删除按钮。
+function deleteSourceRect(s: SessionMeta): DOMRect | null {
+  const cards = document.querySelectorAll<HTMLElement>('.session-card')
+  for (const c of cards) {
+    if (c.dataset.path === s.path) return c.getBoundingClientRect()
+  }
+  const chatDel = document.querySelector<HTMLElement>('.chat-head .icon-btn.danger')
+  return chatDel ? chatDel.getBoundingClientRect() : null
+}
+
+// 删除项目起点矩形：侧边栏里该项目的行。
+function projectSourceRect(p: ProjectInfo): DOMRect | null {
+  for (const el of document.querySelectorAll<HTMLElement>('.proj-item')) {
+    if (el.dataset.path === p.displayPath) return el.getBoundingClientRect()
+  }
+  return null
+}
+
+// 恢复起点矩形：回收站列表里对应的 .session-card（按 trashFile 匹配），
+// 在回收站详情页里恢复时没有列表卡片，改用顶栏的恢复按钮作起点。
+function restoreSourceRect(item: TrashItem): DOMRect | null {
+  for (const c of document.querySelectorAll<HTMLElement>('.session-card')) {
+    if (c.dataset.trash === item.trashFile) return c.getBoundingClientRect()
+  }
+  const headBtn = document.querySelector<HTMLElement>('.chat-head .chat-restore-btn')
+  return headBtn ? headBtn.getBoundingClientRect() : null
+}
+
+// 恢复落点：侧边栏里该会话所属项目的行（trashFile 的 projectLabel == 项目 displayPath）；
+// 项目此刻尚未出现在侧边栏时退回到整个项目列表容器。
+function restoreTarget(item: TrashItem): HTMLElement | null {
+  for (const el of document.querySelectorAll<HTMLElement>('.proj-item')) {
+    if (el.dataset.path === item.projectLabel) return el
+  }
+  return document.querySelector<HTMLElement>('.proj-list')
+}
+
 function deleteSession(s: SessionMeta) {
   ask({
     title: t('dialog.delete.title'),
     message: t('dialog.delete.body', { title: s.title }),
     okText: t('dialog.delete.ok'),
     onOk: async () => {
+      // 在移除该行之前抓取起点，触发飞向回收站的弧线动画
+      const srcRect = deleteSourceRect(s)
       try {
         await api.softDeleteSession(
           agent.value,
           s.path,
           activeProject.value?.displayPath ?? '',
         )
+        fly({
+          from: srcRect,
+          to: document.querySelector<HTMLElement>('.topbar-trash-btn'),
+          variant: 'trash',
+        })
         sessions.value = sessions.value.filter((x) => x.path !== s.path)
         sessionTotal.value = Math.max(0, sessionTotal.value - 1)
         if (openSession.value?.path === s.path) openSession.value = null
         await loadProjects()
+        // 刷新回收站列表，让顶栏红点立即反映新状态
+        api.listTrash().then((items) => { trash.value = items }).catch(() => {})
         notify(t('toast.moved'))
       } catch (e) {
         notify(t('toast.deleteFail', { e: String(e) }), true)
@@ -455,9 +611,17 @@ function restore(item: TrashItem) {
     message: t('dialog.restore.body', { title: item.title }),
     okText: t('dialog.restore.ok'),
     onOk: async () => {
+      // 在该行被移除前抓取起点与落点，触发飞回侧边栏项目列表的弧线动画
+      const srcRect = restoreSourceRect(item)
+      const target = restoreTarget(item)
       try {
         await api.restoreSession(item.trashFile)
+        fly({ from: srcRect, to: target, variant: 'restore' })
         trash.value = trash.value.filter((x) => x.trashFile !== item.trashFile)
+        // 若正在回收站详情里查看的就是这条，恢复后退回回收站列表。
+        if (openTrashItem.value?.trashFile === item.trashFile) {
+          openSession.value = null
+        }
         await loadProjects()
         notify(t('toast.restored'))
       } catch (e) {
@@ -485,6 +649,33 @@ function permanentDelete(item: TrashItem) {
   })
 }
 
+// 批量恢复：恢复 trashToolbar 里勾选的会话。失败项跳过，只从 trash 移除成功项。
+function batchRestore() {
+  const keys = new Set(selectedTrash.value)
+  const items = trash.value.filter((x) => keys.has(x.trashFile))
+  if (!items.length) return
+  ask({
+    title: t('dialog.batchRestore.title'),
+    message: t('dialog.batchRestore.body', { n: items.length }),
+    okText: t('dialog.batchRestore.ok'),
+    onOk: async () => {
+      const restored = new Set<string>()
+      for (const it of items) {
+        try {
+          await api.restoreSession(it.trashFile)
+          restored.add(it.trashFile)
+        } catch {
+          /* 跳过失败项，继续恢复其余 */
+        }
+      }
+      trash.value = trash.value.filter((x) => !restored.has(x.trashFile))
+      exitSelectMode()
+      await loadProjects()
+      notify(t('toast.batchRestored', { n: restored.size }))
+    },
+  })
+}
+
 function clearTrash() {
   if (!trash.value.length) return
   ask({
@@ -496,6 +687,7 @@ function clearTrash() {
       try {
         await api.emptyTrash()
         trash.value = []
+        exitSelectMode()
         notify(t('toast.trashEmptied'))
       } catch (e) {
         notify(t('toast.emptyFail', { e: String(e) }), true)
@@ -562,6 +754,23 @@ async function resume(s: SessionMeta) {
   }
 }
 
+// 在终端里为当前项目开一个全新会话（不带 --resume）。
+async function newSession() {
+  if (!activeProject.value) return
+  try {
+    await api.newSession(agent.value, activeProject.value.displayPath)
+    notify(t('toast.newSession'))
+  } catch (e) {
+    notify(`${e}`, true)
+  }
+}
+
+// 顶栏右上角的仓库入口
+const REPO_URL = 'https://github.com/jerrywu001/cc-sessions-viewer'
+function openRepo() {
+  api.openUrl(REPO_URL).catch((e) => notify(`${e}`, true))
+}
+
 function onClearCache() {
   ask({
     title: t('dialog.clearCache.title'),
@@ -587,6 +796,8 @@ function onBlur() {
 
 onMounted(() => {
   loadProjects()
+  // 启动时拉一次回收站，让顶栏红点从一开始就准确（不必先打开回收站视图）
+  api.listTrash().then((items) => { trash.value = items }).catch(() => {})
   window.addEventListener('focus', onFocus)
   window.addEventListener('blur', onBlur)
   // 右键菜单的全局关闭：任意点击 / 滚轮 / ESC
@@ -621,6 +832,7 @@ onMounted(() => {
       <SidebarTopbar
         :refreshing="refreshing"
         :show-trash="showTrash"
+        :has-trash="trash.length > 0"
         @toggle-sidebar="toggleSidebar"
         @refresh="refreshAll"
         @open-trash="loadTrash"
@@ -629,9 +841,13 @@ onMounted(() => {
            本身仍是 macOS 拖动区域，组件内部的可交互元素由 CSS 单独标 no-drag。 -->
       <div class="topbar-drag">
         <ChatTopbar v-if="openSession" />
-        <TrashTopbar v-else-if="showTrash" :count="trash.length" />
-        <SessionsTopbar v-else-if="activeProject" :project="activeProject" />
-        <EmptyTopbar v-else />
+        <TrashTopbar
+          v-else-if="showTrash"
+          :items="trash"
+          @batch-restore="batchRestore"
+        />
+        <SessionsTopbar v-else-if="activeProject" />
+        <div v-else />
       </div>
     </div>
 
@@ -656,9 +872,10 @@ onMounted(() => {
         <div v-if="loadingChat" class="loading">{{ t('common.loading') }}</div>
         <ChatView
           v-else
-          :agent="agent"
+          :agent="chatAgent"
           :session="openSession"
           :messages="chatMsgs"
+          :trashed="!!openTrashItem"
           @back="openSession = null"
           @refresh="openChat(openSession)"
           @delete="deleteSession(openSession)"
@@ -668,6 +885,7 @@ onMounted(() => {
           @copy-id="copyText(openSession.id)"
           @export-md="exportSession('md')"
           @export-html="exportSession('html')"
+          @restore="openTrashItem && restore(openTrashItem)"
         />
       </template>
 
@@ -677,6 +895,7 @@ onMounted(() => {
         :trash="trash"
         :loading="loadingList"
         @clear="clearTrash"
+        @open="openTrashSession"
         @restore="restore"
         @permanent-delete="permanentDelete"
       />
@@ -697,14 +916,21 @@ onMounted(() => {
         @delete="deleteSession"
         @copy="copyText"
         @export="exportFromList"
+        @refresh="refreshSessions"
+        @new-session="newSession"
+        @delete-project="deleteActiveProject"
         @load-more="loadMore"
         @scroll="onListScroll"
       />
 
-      <div v-else class="empty">
-        <div class="big"><IconEmptyBox /></div>
-        <div>{{ t('main.pickProject', { agent: agentName }) }}</div>
-      </div>
+      <WelcomeView
+        v-else
+        :agent="agent"
+        :projects="projects"
+        @select-project="selectProject"
+        @switch-agent="switchAgent"
+        @open-repo="openRepo"
+      />
     </main>
     </div>
 

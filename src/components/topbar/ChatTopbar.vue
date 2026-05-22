@@ -98,7 +98,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           type="button"
           class="ct-scope-btn"
           :class="{ active: scopeMenuOpen }"
-          v-tooltip="t('chat.tb.scope.tooltip')"
+          v-tooltip:right="t('chat.tb.scope.tooltip')"
           @click="toggleScopeMenu"
         >
           <span class="ct-scope-label">{{ scopeLabel }}</span>

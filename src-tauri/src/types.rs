@@ -90,6 +90,8 @@ pub struct TrashItem {
     pub agent: String,
     pub project_label: String,
     pub original_path: String,
+    /// 回收站里 JSONL 的绝对路径，供「在回收站里直接查看会话详情」读取。
+    pub trash_path: String,
     pub deleted_at: u64,
     pub title: String,
     pub size: u64,

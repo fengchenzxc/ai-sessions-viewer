@@ -19,10 +19,25 @@ npm run tauri dev        # full dev (Tauri shell + Vite on :1420)
 npm run tauri build      # bundle .app / .dmg into src-tauri/target/release/bundle/
 npm run dev              # web-only Vite preview; Tauri invokes will fail
 npm run build            # vue-tsc --noEmit + vite build
+npm test                 # vitest watch mode
+npm run test:run         # vitest single run (CI)
+npm run test:coverage    # vitest single run + v8 coverage report
 ```
 
-There is no test runner and no linter wired up — `npm run build` (which runs
-`vue-tsc --noEmit` first) is the typecheck step.
+There is no linter wired up — `npm run build` (which runs `vue-tsc --noEmit`
+first) is the typecheck step.
+
+Unit tests run on **Vitest** (jsdom env) and live under `test/`, mirroring
+`src/`. They cover the agent-agnostic logic modules (`format`, `i18n`,
+`settings`, `chatToolbar`, `trashToolbar`, `sessionsToolbar`, `export`, `api`,
+`fly`, `tooltip`) and the leaf components (`DiffBlock`, `ToolResult`,
+`CollapsibleBox`, `Sidebar`, `SidebarTopbar`, `SessionsTopbar`, `TrashTopbar`,
+`SettingsModal`). Config is `vitest.config.ts` (separate from
+`vite.config.ts`); jsdom polyfills for `matchMedia` / `ResizeObserver` /
+`Element.animate` live in `test/setup.ts`. `App.vue`, `views/`, and `modals/`
+are stateful shells left to manual/e2e testing and excluded from coverage.
+`test/tsconfig.json` is IDE-only — the production build never type-checks
+`test/`.
 
 Vite is locked to port `1420` (strictPort) because `tauri.conf.json` hardcodes
 that URL. `src-tauri/**` is excluded from Vite's watcher; Rust changes are

@@ -67,6 +67,8 @@ export interface TrashItem {
   agent: Agent
   projectLabel: string
   originalPath: string
+  /** 回收站里 JSONL 的绝对路径，用于在回收站里直接查看会话详情。 */
+  trashPath: string
   deletedAt: number
   title: string
   size: number

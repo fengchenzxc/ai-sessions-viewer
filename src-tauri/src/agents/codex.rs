@@ -288,6 +288,7 @@ fn scan(fp: &Path, m: &Meta, title_index: &HashMap<String, String>) -> SessionMe
 ///      （真正的 base64 / URL 在这里）；
 ///   2. 紧接着一条 `event_msg.user_message`，message 字段是去掉图片占位
 ///      （`<image name=[Image #N]>...</image>`）之后的纯文本（用户键入的部分）。
+///
 /// 用 event_msg 那条作为最终用户气泡的文本来源，扫到对应 response_item 时
 /// 先把里面的 `input_image` 块缓存起来，等到下一条 user_message 出现时一起渲染。
 fn read(path: &str) -> Result<Vec<Msg>, String> {
@@ -333,7 +334,7 @@ fn read(path: &str) -> Result<Vec<Msg>, String> {
             }
             ("event_msg", "user_message") => {
                 let text = p.get("message").and_then(|x| x.as_str()).unwrap_or("");
-                let mut blocks: Vec<Block> = pending_user_images.drain(..).collect();
+                let mut blocks: Vec<Block> = std::mem::take(&mut pending_user_images);
                 if !text.trim().is_empty() {
                     blocks.push(text_block("text", text));
                 }
@@ -624,6 +625,10 @@ impl SessionSource for CodexSource {
 
     fn resume_cli(&self, session_id: &str) -> String {
         format!("codex resume {session_id}")
+    }
+
+    fn new_session_cli(&self) -> String {
+        "codex".to_string()
     }
 
     fn image_src(&self, block: &Value) -> Option<String> {

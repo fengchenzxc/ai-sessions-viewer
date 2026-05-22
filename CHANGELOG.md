@@ -8,7 +8,25 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **Empty-state welcome screen** — with no project selected, the main area now lists recently opened projects (per agent) for one-click jump-back, an agent switch, and a link to the project repository.
+- **Session list toolbar** — search a project's sessions by title / ID with match highlighting, sort by recency / size / message count, and filter to sessions that have an ID.
+- **New session in terminal** — start a fresh `claude` / `codex` session in a project's directory straight from the session-list header; the header also gains refresh and delete-project actions.
+- **Trash list improvements** — keyword-highlighted search, click a trashed entry to preview its full transcript, and a hover spotlight matching the session list.
+- **Fly animations** — single-session restore arcs back to its project in the sidebar, and deleting a whole project arcs to Trash, mirroring the existing delete-to-trash animation.
+- **Vitest test suite** and a GitHub Actions CI workflow (typecheck, unit tests, `cargo clippy` / `cargo test`).
+
+### Changed
+
+- Toast notifications now appear top-center instead of bottom.
+- Projects whose working directory no longer exists show a **"Directory missing"** tag; actions that depend on that directory (resume, new session, refresh) are hidden for them — in both the session list and the sidebar context menu.
+- Clicking the already-selected project deselects it (toggle), returning to the welcome screen.
+- The Trash toolbar hides its sort / multi-select controls when there is one item or none.
+
+### Fixed
+
+- Queued user messages — text typed while the agent is still working — were dropped from the Claude transcript; they now render correctly, including messages that contain images.
 
 ---
 

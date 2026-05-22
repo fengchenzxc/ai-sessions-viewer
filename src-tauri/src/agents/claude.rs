@@ -110,13 +110,26 @@ impl SessionSource for ClaudeSource {
             .and_then(|n| n.to_str())
             .map(|s| s.trim_end_matches(".jsonl").to_string())
             .unwrap_or_default();
-        let line = serde_json::json!({
+        // Claude Code `/rename` 会成对追加 custom-title + agent-name 两条记录
+        // （同值）。这里照搬，保证 claude CLI 与本应用互认。
+        let title_line = serde_json::json!({
             "type": "custom-title",
             "customTitle": trimmed,
             "sessionId": id,
         })
         .to_string();
-        append_jsonl_line(path, &line)
+        let agent_line = serde_json::json!({
+            "type": "agent-name",
+            "agentName": trimmed,
+            "sessionId": id,
+        })
+        .to_string();
+        append_jsonl_line(path, &title_line)?;
+        append_jsonl_line(path, &agent_line)?;
+        // 运行时镜像：若该会话当前有运行中的 claude 进程，更新对应 PID.json
+        // 的 name。是 best-effort，找不到 / 失败都不影响持久标题。
+        mirror_runtime_name(&id, trimmed);
+        Ok(())
     }
 
     fn trash_title(&self, path: &Path) -> String {
@@ -125,6 +138,10 @@ impl SessionSource for ClaudeSource {
 
     fn resume_cli(&self, session_id: &str) -> String {
         format!("claude --resume {session_id}")
+    }
+
+    fn new_session_cli(&self) -> String {
+        "claude".to_string()
     }
 
     fn image_src(&self, block: &Value) -> Option<String> {
@@ -144,6 +161,53 @@ fn first_cwd(fp: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// 用户在 Claude 处理过程中排队输入的消息会被记成
+/// `{"type":"attachment","attachment":{"type":"queued_command","prompt":...}}`，
+/// 而非常规的 `type:"user"` 记录。把其中的 `prompt` 解析成消息块：纯文本排队
+/// 消息的 `prompt` 是字符串，带贴图的则是 text / image 块数组。非排队命令的
+/// attachment（hook_success / task_reminder / diagnostics 等）返回 None。
+fn queued_command_blocks(v: &Value) -> Option<Vec<Block>> {
+    let att = v.get("attachment")?;
+    if att.get("type").and_then(|x| x.as_str()) != Some("queued_command") {
+        return None;
+    }
+    let mut blocks = Vec::new();
+    match att.get("prompt")? {
+        Value::String(s) if !s.trim().is_empty() => {
+            blocks.push(text_block("text", s));
+        }
+        Value::Array(arr) => {
+            for el in arr {
+                match el.get("type").and_then(|x| x.as_str()) {
+                    Some("text") => {
+                        if let Some(s) = el.get("text").and_then(|x| x.as_str()) {
+                            if !s.trim().is_empty() {
+                                blocks.push(text_block("text", s));
+                            }
+                        }
+                    }
+                    Some("image") => {
+                        if let Some(src) = image_src(el) {
+                            blocks.push(Block {
+                                kind: "image".to_string(),
+                                image_src: Some(src),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(blocks)
+    }
 }
 
 fn user_text(v: &Value) -> Option<String> {
@@ -296,6 +360,41 @@ fn parse_structured_patch(v: &Value) -> Option<Vec<DiffHunk>> {
     Some(hunks)
 }
 
+/// 把新标题镜像到 ~/.claude/sessions/<PID>.json 的 name 字段。
+/// 这是 Claude Code 运行时维护的会话态文件，按 sessionId 找到匹配项，
+/// 只改 name、保留其余字段。是 best-effort：找不到 / 解析失败 / 写失败都静默跳过，
+/// 不影响 jsonl 里的持久标题。
+fn mirror_runtime_name(session_id: &str, name: &str) {
+    let dir = home().join(".claude").join("sessions");
+    let entries = match fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let content = match fs::read_to_string(&p) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut v: Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("sessionId").and_then(|x| x.as_str()) != Some(session_id) {
+            continue;
+        }
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("name".to_string(), Value::String(name.to_string()));
+            if let Ok(serialized) = serde_json::to_string(&v) {
+                let _ = fs::write(&p, serialized);
+            }
+        }
+    }
+}
+
 /// 单遍扫描一个 jsonl，提取标题 / 时间 / 消息数等元信息。
 fn scan(fp: &Path) -> SessionMeta {
     let file_name = fp
@@ -306,8 +405,8 @@ fn scan(fp: &Path) -> SessionMeta {
     let size = fs::metadata(fp).map(|m| m.len()).unwrap_or(0);
     let modified = mtime_millis(fp);
 
-    // Claude Code `/rename <name>` 会追加一行 `{"type":"custom-title", ...}`，
-    // 最后一条生效。优先使用它，否则回落到首条 user message。
+    // Claude Code `/rename <name>` 会成对追加 `custom-title` + `agent-name`
+    // 两条记录（同值）。两者都识别，最后一条生效；否则回落到首条 user message。
     let mut first_user_title = String::new();
     let mut custom_title: Option<String> = None;
     let mut cwd: Option<String> = None;
@@ -329,8 +428,13 @@ fn scan(fp: &Path) -> SessionMeta {
                     cwd = Some(c.to_string());
                 }
             }
-            if t == "custom-title" {
-                if let Some(ct) = v.get("customTitle").and_then(|x| x.as_str()) {
+            if t == "custom-title" || t == "agent-name" {
+                let field = if t == "custom-title" {
+                    "customTitle"
+                } else {
+                    "agentName"
+                };
+                if let Some(ct) = v.get(field).and_then(|x| x.as_str()) {
                     let trimmed = ct.trim();
                     if !trimmed.is_empty() {
                         custom_title = Some(trimmed.to_string());
@@ -345,6 +449,10 @@ fn scan(fp: &Path) -> SessionMeta {
                         .and_then(|x| x.as_str())
                         .map(|s| s.to_string());
                 }
+                message_count += 1;
+            }
+            // 排队输入的消息（attachment/queued_command）也算一条用户消息。
+            if t == "attachment" && queued_command_blocks(&v).is_some() {
                 message_count += 1;
             }
             if first_user_title.is_empty() && t == "user" {
@@ -389,6 +497,28 @@ fn read(path: &str) -> Result<Vec<Msg>, String> {
             Err(_) => continue,
         };
         let t = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        // 用户在 Claude 处理中排队输入的消息不是常规 user 记录，而是
+        // `attachment`（attachment.type == "queued_command"）。常规解析只认
+        // user/assistant，会整条丢掉它 —— 这里单独补成一条 user 气泡。
+        if t == "attachment" {
+            if let Some(blocks) = queued_command_blocks(&v) {
+                msgs.push(Msg {
+                    uuid: v.get("uuid").and_then(|x| x.as_str()).map(|s| s.to_string()),
+                    role: "user".to_string(),
+                    timestamp: v
+                        .get("timestamp")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
+                    model: None,
+                    sidechain: v
+                        .get("isSidechain")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false),
+                    blocks,
+                });
+            }
+            continue;
+        }
         if t != "user" && t != "assistant" {
             continue;
         }
@@ -521,4 +651,62 @@ fn read(path: &str) -> Result<Vec<Msg>, String> {
         });
     }
     Ok(msgs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_text_queued_command() {
+        let v = json!({
+            "type": "attachment",
+            "attachment": { "type": "queued_command", "prompt": "改完看 readme" },
+        });
+        let blocks = queued_command_blocks(&v).expect("text prompt");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, "text");
+        assert_eq!(blocks[0].text.as_deref(), Some("改完看 readme"));
+    }
+
+    #[test]
+    fn extracts_queued_command_with_image() {
+        // 带贴图的排队消息：prompt 是 text + image 数组，图片不能丢。
+        let v = json!({
+            "type": "attachment",
+            "attachment": { "type": "queued_command", "prompt": [
+                { "type": "text", "text": "[Image #10]" },
+                { "type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "AAAA" } },
+            ] },
+        });
+        let blocks = queued_command_blocks(&v).expect("text + image prompt");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].kind, "text");
+        assert_eq!(blocks[1].kind, "image");
+        assert_eq!(
+            blocks[1].image_src.as_deref(),
+            Some("data:image/png;base64,AAAA"),
+        );
+    }
+
+    #[test]
+    fn ignores_non_queued_attachments() {
+        // hook_success / task_reminder / diagnostics 等 attachment 不是用户消息
+        let v = json!({
+            "type": "attachment",
+            "attachment": { "type": "hook_success", "content": "OK" },
+        });
+        assert!(queued_command_blocks(&v).is_none());
+    }
+
+    #[test]
+    fn ignores_blank_queued_prompt() {
+        let v = json!({
+            "type": "attachment",
+            "attachment": { "type": "queued_command", "prompt": "   " },
+        });
+        assert!(queued_command_blocks(&v).is_none());
+    }
 }

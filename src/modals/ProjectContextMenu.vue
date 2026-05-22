@@ -36,11 +36,14 @@ const emit = defineEmits<{
         {{ projState === 'sunk' ? t('proj.unsink') : t('proj.sink') }}
       </button>
       <div class="ctx-sep" />
-      <button class="ctx-item" @click="emit('refresh')">
-        <IconRefresh />
-        {{ t('proj.refresh') }}
-      </button>
-      <div class="ctx-sep" />
+      <!-- 目录已不存在 → 刷新无意义，连同分隔线一起隐藏 -->
+      <template v-if="project.exists">
+        <button class="ctx-item" @click="emit('refresh')">
+          <IconRefresh />
+          {{ t('proj.refresh') }}
+        </button>
+        <div class="ctx-sep" />
+      </template>
       <button class="ctx-item danger" @click="emit('delete')">
         <IconTrashOpen />
         {{ t('proj.delete') }}

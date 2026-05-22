@@ -78,7 +78,7 @@ pub fn format_iso8601_utc(secs: i64, ms: u32) -> String {
     let s = secs.rem_euclid(60) as u32;
     let m = (secs.div_euclid(60)).rem_euclid(60) as u32;
     let h = (secs.div_euclid(3600)).rem_euclid(24) as u32;
-    let mut days = secs.div_euclid(86400) as i64;
+    let mut days = secs.div_euclid(86400);
     let mut year: i64 = 1970;
     loop {
         let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;

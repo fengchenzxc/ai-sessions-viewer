@@ -1,19 +1,93 @@
 <script setup lang="ts">
+import { computed, onUnmounted, ref } from 'vue'
 import type { TrashItem } from '../types'
-import { formatSize, formatTime, shortName } from '../format'
+import { formatSize, formatTime, highlightSegments, shortName } from '../format'
 import { t } from '../i18n'
-import { IconTrashOpen } from '../components/icons'
+import {
+  IconTrashOpen,
+  IconTrash,
+  IconRestore,
+  IconInbox,
+  IconCheck,
+} from '../components/icons'
+import {
+  filterTrash,
+  selectMode,
+  selectedTrash,
+  toggleTrashSelected,
+  trashSearch,
+} from '../trashToolbar'
 
-defineProps<{
+const props = defineProps<{
   trash: TrashItem[]
   loading: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'clear'): void
+  (e: 'open', item: TrashItem): void
   (e: 'restore', item: TrashItem): void
   (e: 'permanent-delete', item: TrashItem): void
 }>()
+
+// 搜索 / 项目筛选 / 时间排序后的可见列表 —— 工具栏状态来自 trashToolbar 模块。
+const visibleTrash = computed(() => filterTrash(props.trash))
+
+// 批量模式下点整张卡片即勾选；否则打开该会话的只读详情。
+function onCardClick(item: TrashItem) {
+  if (selectMode.value) toggleTrashSelected(item.trashFile)
+  else emit('open', item)
+}
+
+// 搜索时把标题 / 项目名里命中的关键词切成高亮片段（命中段加 .kw-hit）。
+// filterTrash 用 title + projectLabel 匹配，故两处都做高亮。
+function titleSegs(title: string) {
+  return highlightSegments(title, trashSearch.value)
+}
+function projSegs(projectLabel: string) {
+  return highlightSegments(shortName(projectLabel), trashSearch.value)
+}
+
+// hover 跟随浮块：与会话列表一致的滑块交互。鼠标移到某张卡片上，把它的
+// offsetTop / offsetHeight 写进 --spot-y / --spot-h 驱动 .list-spotlight；
+// 滚动期间临时隐藏，停止 140ms 后恢复，避免内容在静止光标下移动时抖动。
+const scrollEl = ref<HTMLElement>()
+const spotlightEl = ref<HTMLElement>()
+let scrolling = false
+let scrollIdle = 0
+function markScrolling() {
+  if (!scrolling) {
+    scrolling = true
+    scrollEl.value?.classList.remove('has-spot')
+  }
+  clearTimeout(scrollIdle)
+  scrollIdle = window.setTimeout(() => {
+    scrolling = false
+  }, 140)
+}
+function onListMouseOver(e: MouseEvent) {
+  if (scrolling) return
+  const sa = scrollEl.value
+  const sp = spotlightEl.value
+  if (!sa || !sp) return
+  const card = (e.target as HTMLElement | null)?.closest<HTMLElement>('.session-card')
+  if (!card || !sa.contains(card)) return
+  // 从隐藏态重新出现时先 no-slide 直接跳到目标行再淡入，避免整屏滑动的突兀感。
+  const reappearing = !sa.classList.contains('has-spot')
+  if (reappearing) sp.classList.add('no-slide')
+  sp.style.setProperty('--spot-y', `${card.offsetTop}px`)
+  sp.style.setProperty('--spot-h', `${card.offsetHeight}px`)
+  sa.classList.add('has-spot')
+  if (reappearing) {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => sp.classList.remove('no-slide')),
+    )
+  }
+}
+function onListMouseLeave() {
+  scrollEl.value?.classList.remove('has-spot')
+}
+onUnmounted(() => clearTimeout(scrollIdle))
 </script>
 
 <template>
@@ -31,35 +105,79 @@ const emit = defineEmits<{
     <div class="big"><IconTrashOpen /></div>
     <div>{{ t('trash.empty') }}</div>
   </div>
-  <div v-else class="scroll-area">
-    <div
-      v-for="item in trash"
-      :key="item.trashFile"
-      class="session-card"
-      style="cursor: default"
-    >
-      <div class="session-main">
-        <div class="session-title">
-          <span class="agent-badge" :class="item.agent">{{
-            item.agent === 'codex' ? 'Codex' : 'Claude'
-          }}</span>
-          {{ item.title }}
+  <div v-else-if="!visibleTrash.length" class="empty">
+    <div class="big"><IconInbox /></div>
+    <div>{{ t('trash.noMatch') }}</div>
+  </div>
+  <div
+    v-else
+    ref="scrollEl"
+    class="scroll-area"
+    @scroll.passive="markScrolling"
+    @mouseover.passive="onListMouseOver"
+    @mouseleave.passive="onListMouseLeave"
+  >
+    <div class="vlist">
+      <div ref="spotlightEl" class="list-spotlight" aria-hidden="true" />
+      <div
+        v-for="item in visibleTrash"
+        :key="item.trashFile"
+        class="session-card"
+        :data-trash="item.trashFile"
+        :class="{
+          'trash-selectable': selectMode,
+          'trash-selected': selectMode && selectedTrash.has(item.trashFile),
+        }"
+        @click="onCardClick(item)"
+      >
+        <span
+          v-if="selectMode"
+          class="trash-check"
+          :class="{ on: selectedTrash.has(item.trashFile) }"
+          aria-hidden="true"
+        >
+          <IconCheck v-if="selectedTrash.has(item.trashFile)" />
+        </span>
+        <div class="session-main">
+          <div class="session-title">
+            <span class="agent-badge" :class="item.agent">{{
+              item.agent === 'codex' ? 'Codex' : 'Claude'
+            }}</span>
+            <span><span
+              v-for="(seg, i) in titleSegs(item.title)"
+              :key="i"
+              :class="{ 'kw-hit': seg.hit }"
+            >{{ seg.text }}</span></span>
+          </div>
+          <div class="session-meta">
+            <span v-if="!shortName(item.projectLabel)">—</span>
+            <span v-else><span
+              v-for="(seg, i) in projSegs(item.projectLabel)"
+              :key="i"
+              :class="{ 'kw-hit': seg.hit }"
+            >{{ seg.text }}</span></span>
+            <span>{{ formatSize(item.size) }}</span>
+            <span>{{
+              t('trash.deletedAt', { time: formatTime(item.deletedAt) })
+            }}</span>
+          </div>
         </div>
-        <div class="session-meta">
-          <span>{{ shortName(item.projectLabel) || '—' }}</span>
-          <span>{{ formatSize(item.size) }}</span>
-          <span>{{
-            t('trash.deletedAt', { time: formatTime(item.deletedAt) })
-          }}</span>
+        <div v-if="!selectMode" class="session-actions" style="opacity: 1">
+          <button
+            class="icon-btn"
+            v-tooltip="t('trash.restore')"
+            @click.stop="emit('restore', item)"
+          >
+            <IconRestore />
+          </button>
+          <button
+            class="icon-btn danger"
+            v-tooltip="t('trash.permDelete')"
+            @click.stop="emit('permanent-delete', item)"
+          >
+            <IconTrash />
+          </button>
         </div>
-      </div>
-      <div class="session-actions" style="opacity: 1">
-        <button class="btn" @click="emit('restore', item)">
-          {{ t('trash.restore') }}
-        </button>
-        <button class="btn danger" @click="emit('permanent-delete', item)">
-          {{ t('trash.permDelete') }}
-        </button>
       </div>
     </div>
   </div>

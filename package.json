@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
     "prepare": "husky"
   },
@@ -28,12 +31,16 @@
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/cli": "^2.11.2",
     "@vitejs/plugin-vue": "^6.0.7",
+    "@vitest/coverage-v8": "^4.1.7",
+    "@vue/test-utils": "^2.4.10",
     "husky": "^9.1.7",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.0",
     "typescript": "~6.0.3",
     "unplugin-icons": "^23.0.1",
     "vite": "^8.0.14",
     "vite-plugin-vue-devtools": "^8.1.2",
+    "vitest": "^4.1.7",
     "vue-tsc": "^3.3.1"
   }
 }

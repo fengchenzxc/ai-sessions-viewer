@@ -18,6 +18,7 @@ import {
   IconArrowLeft,
   IconRefresh,
   IconTrash,
+  IconRestore,
   IconPlay,
   IconFolder,
   IconArrowUp,
@@ -35,6 +36,8 @@ const props = defineProps<{
   agent: Agent
   session: SessionMeta
   messages: Msg[]
+  /** 会话来自回收站 —— 只读查看，隐藏 重命名/恢复终端/删除/导出 等操作。 */
+  trashed?: boolean
 }>()
 
 defineEmits<{
@@ -47,6 +50,7 @@ defineEmits<{
   copyId: []
   exportMd: []
   exportHtml: []
+  restore: []
 }>()
 
 function shortId(id: string): string {
@@ -433,6 +437,7 @@ function onDocClick(e: MouseEvent) {
       <div class="t">
         <span class="t-text">{{ session.title }}</span>
         <button
+          v-if="!trashed"
           class="title-rename-ic"
           v-tooltip="t('chat.action.rename')"
           @click="$emit('rename')"
@@ -462,6 +467,7 @@ function onDocClick(e: MouseEvent) {
       </div>
     </div>
     <button
+      v-if="!trashed"
       class="icon-btn"
       v-tooltip="t('chat.action.resume')"
       @click="$emit('resume')"
@@ -469,6 +475,7 @@ function onDocClick(e: MouseEvent) {
       <IconPlay />
     </button>
     <button
+      v-if="!trashed"
       class="icon-btn"
       v-tooltip="t('chat.action.reveal')"
       @click="$emit('reveal')"
@@ -476,13 +483,14 @@ function onDocClick(e: MouseEvent) {
       <IconFolder />
     </button>
     <button
+      v-if="!trashed"
       class="icon-btn"
       v-tooltip="t('chat.action.refresh')"
       @click="$emit('refresh')"
     >
       <IconRefresh />
     </button>
-    <div ref="exportMenuEl" class="export-menu-wrap">
+    <div v-if="!trashed" ref="exportMenuEl" class="export-menu-wrap">
       <button
         class="icon-btn"
         :class="{ active: exportMenuOpen }"
@@ -511,11 +519,20 @@ function onDocClick(e: MouseEvent) {
       </div>
     </div>
     <button
+      v-if="!trashed"
       class="icon-btn danger"
       v-tooltip="t('chat.action.delete')"
       @click="$emit('delete')"
     >
       <IconTrash />
+    </button>
+    <button
+      v-if="trashed"
+      class="icon-btn chat-restore-btn"
+      v-tooltip="t('trash.restore')"
+      @click="$emit('restore')"
+    >
+      <IconRestore />
     </button>
   </div>
 

@@ -5,6 +5,7 @@ import { IconSidebar, IconRefresh, IconTrashOpen } from './icons'
 defineProps<{
   refreshing: boolean
   showTrash: boolean
+  hasTrash: boolean
 }>()
 
 const emit = defineEmits<{
@@ -35,12 +36,13 @@ const emit = defineEmits<{
       </button>
     </div>
     <button
-      class="top-btn"
+      class="top-btn topbar-trash-btn"
       :class="{ active: showTrash }"
       v-tooltip="t('sidebar.trash')"
       @click="emit('open-trash')"
     >
       <IconTrashOpen />
+      <span v-if="hasTrash" class="trash-dot" aria-hidden="true" />
     </button>
   </div>
 </template>

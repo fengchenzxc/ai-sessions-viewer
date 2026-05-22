@@ -147,3 +147,29 @@ export function shortName(path: string): string {
   const parts = path.split('/').filter(Boolean)
   return parts.length ? parts[parts.length - 1] : path
 }
+
+/** 关键词高亮用的文本片段：hit 为 true 的片段是命中段。 */
+export interface HlSegment {
+  text: string
+  hit: boolean
+}
+
+/** 把 text 按 query（大小写不敏感）的出现位置切成片段，hit 标记命中段。
+ *  query 为空 / text 为空 / 无匹配时返回单段未命中。用 indexOf 而非正则，
+ *  天然免疫 query 里的正则特殊字符。供会话列表的关键词高亮使用。 */
+export function highlightSegments(text: string, query: string): HlSegment[] {
+  const q = query.trim().toLowerCase()
+  if (!q || !text) return [{ text, hit: false }]
+  const lower = text.toLowerCase()
+  const segs: HlSegment[] = []
+  let i = 0
+  let at = lower.indexOf(q)
+  while (at !== -1) {
+    if (at > i) segs.push({ text: text.slice(i, at), hit: false })
+    segs.push({ text: text.slice(at, at + q.length), hit: true })
+    i = at + q.length
+    at = lower.indexOf(q, i)
+  }
+  if (i < text.length) segs.push({ text: text.slice(i), hit: false })
+  return segs
+}

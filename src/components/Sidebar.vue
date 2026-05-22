@@ -74,13 +74,14 @@ function pinColor(p: ProjectInfo): string {
         v-for="p in sortedProjects"
         :key="p.dirName"
         class="proj-item"
+        :data-path="p.displayPath"
         :class="{
           active: activeDir === p.dirName && !showTrash,
           missing: !p.exists,
           pinned: projStateOf(p) === 'pinned',
           sunk: projStateOf(p) === 'sunk',
         }"
-        v-tooltip="p.exists ? p.displayPath : p.displayPath + t('proj.missing')"
+        v-tooltip:right="p.exists ? p.displayPath : p.displayPath + t('proj.missing')"
         @click="emit('select-project', p.dirName)"
         @contextmenu="emit('context-menu', $event, p)"
       >

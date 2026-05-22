@@ -237,17 +237,7 @@ button {
   -webkit-app-region: no-drag;
 }
 
-/* 占位文案 —— 等具体功能落地之后会用真正的按钮/搜索框等替换。 */
-.page-topbar-slot {
-  font-size: 11.5px;
-  color: var(--text-mute);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  letter-spacing: 0.005em;
-  font-style: italic;
-}
+
 
 /* ---------- ChatTopbar：搜索框 / 折叠 / 导出 ---------- */
 .chat-topbar {
@@ -428,6 +418,40 @@ button {
   opacity: 0.35;
   cursor: not-allowed;
 }
+.ct-btn.active {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* ---------- Trash: batch-select ---------- */
+/* selectMode 下整张卡片可点即勾选；选中行用 hover 底色 + 实边框区分。 */
+.session-card.trash-selectable {
+  cursor: pointer;
+}
+.session-card.trash-selected {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+.trash-check {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, border-color 0.12s;
+}
+.trash-check.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.trash-check svg {
+  width: 12px;
+  height: 12px;
+  color: var(--surface);
+}
 
 /* 聊天内容里搜索命中：黄底加深当前命中 —— 跟 macOS Spotlight 一致的体验 */
 .chat-inner mark.search-hit {
@@ -449,6 +473,16 @@ button {
 :root.theme-dark .chat-inner mark.search-hit.current {
   background: #ffb300;
   color: #1a1a1a;
+}
+/* 会话列表搜索命中：标题 / ID 里的关键词高亮，沿用聊天内搜索的黄底 */
+.kw-hit {
+  background: rgba(255, 213, 79, 0.55);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+:root.theme-dark .kw-hit {
+  background: rgba(255, 213, 79, 0.32);
 }
 
 .sidebar {
@@ -725,8 +759,12 @@ button {
   --brand-soft: color-mix(in srgb, var(--text) 6%, transparent);
 }
 .app.is-blurred .top-btn,
-.app.is-blurred .trash-tab,
-.app.is-blurred .session-actions {
+.app.is-blurred .trash-tab {
+  opacity: 0.6;
+}
+/* 只软化「当前 hover 行」已显示的操作按钮；不能裸选 .session-actions——
+   它默认 opacity:0，写 0.6 会把所有未 hover 行的按钮一并显形。 */
+.app.is-blurred .session-card.is-hover .session-actions {
   opacity: 0.6;
 }
 .app.is-blurred .proj-item.active .proj-count {
@@ -753,6 +791,21 @@ button {
   word-break: break-all;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
 }
+/* 项目目录已不在磁盘上时，路径后跟一个醒目的提示标签 */
+.dir-missing-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  vertical-align: 1px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  white-space: nowrap;
+}
 .list-head-row {
   display: flex;
   align-items: center;
@@ -762,6 +815,12 @@ button {
   flex: 1;
   min-width: 0;
 }
+/* 会话列表头部右上角的操作按钮组（新建会话 / 刷新） */
+.list-head-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
 
 /* ---------- Session list ---------- */
 .scroll-area {
@@ -769,7 +828,42 @@ button {
   overflow-y: auto;
   padding: 8px 16px 28px;
 }
+/* 列表外壳：作为 .list-spotlight 与 .session-card 的共同定位参考系。 */
+.vlist {
+  position: relative;
+}
+/* hover 跟随浮块：列表里独此一个，鼠标 mouseover 触发 JS 写入 --spot-y / --spot-h。
+   刻意用 top/height 过渡而非 transform + will-change —— 后者会把浮块提成常驻 GPU
+   合成层，在卡片下方滑动时触发 WebKit 的重叠合成，殃及上方带 opacity 过渡的
+   .session-actions，导致按钮残影留在浮块扫过的行上。浮块在滚动时本就隐藏，
+   top 过渡只在 hover 切行时发生，没有滚动帧的布局开销。 */
+.list-spotlight {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--spot-y, 0);
+  height: var(--spot-h, 0);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  transition:
+    top 0.34s cubic-bezier(0.2, 1, 0.2, 1),
+    height 0.34s cubic-bezier(0.2, 1, 0.2, 1),
+    opacity 0.18s linear;
+}
+.scroll-area.has-spot .list-spotlight {
+  opacity: 1;
+}
+/* 从隐藏态重新出现时只淡入、不滑动（位置直接跳到目标行） */
+.list-spotlight.no-slide {
+  transition: opacity 0.18s linear;
+}
 .session-card {
+  position: relative; /* 抬到 spotlight 之上 */
+  z-index: 1;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -779,11 +873,7 @@ button {
   align-items: center;
   gap: 14px;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-.session-card:hover {
-  background: var(--surface-hover);
-  border-color: var(--border);
+  transition: background 0.12s;
 }
 .session-card:active {
   background: var(--surface-active);
@@ -826,14 +916,40 @@ button {
   font-size: 11.5px;
   color: var(--text-mute);
 }
+/* 分页加载提示：footer 内的转圈 + "Loading more…" 文案 */
+.footer-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.chip-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.6px solid var(--border-strong);
+  border-top-color: var(--text);
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
 .session-actions {
   display: flex;
   gap: 2px;
   opacity: 0;
   transition: opacity 0.12s;
 }
-.session-card:hover .session-actions {
+/* 用 JS 驱动的 .is-hover 而非 CSS :hover：虚拟列表回收 DOM 节点时，
+   WebKit 的 :hover 伪类会在多个物理节点上卡住，导致多行同时亮起。 */
+.session-card.is-hover .session-actions,
+/* 菜单展开期间强制保活：.export-menu 是 .session-actions 的后代，
+   靠父级 opacity 显隐，hover 一旦移走菜单会随父级一起隐没。 */
+.session-card.menu-open .session-actions {
   opacity: 1;
+}
+/* 每张 .session-card 都是 z-index:1，.export-menu 的 z-index:50 因此被困在
+   本卡片的 stacking context 里 —— 后面的同级卡片仍会整体盖住下拉菜单（图标
+   穿透、hover 失效）。菜单展开时把整张卡片抬到同级之上。 */
+.session-card.menu-open {
+  z-index: 10;
 }
 
 /* ---------- Icon buttons ---------- */
@@ -930,6 +1046,166 @@ button {
   height: 40px;
   stroke-width: 1.4;
 }
+
+/* ---------- Welcome (empty-state landing) ---------- */
+.welcome {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+}
+/* 仓库入口 —— 固定在主页面右上角，图标比顶栏按钮略大 */
+.welcome-github {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mute);
+  transition: background 0.12s, color 0.12s;
+}
+.welcome-github svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.6;
+}
+.welcome-github:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.welcome-inner {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.welcome-logo {
+  color: var(--text-mute);
+  opacity: 0.55;
+}
+.welcome-logo svg {
+  width: 42px;
+  height: 42px;
+  stroke-width: 1.3;
+}
+.welcome-title {
+  margin: 13px 0 18px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+/* agent 切换 —— 与侧栏分段控件同款 */
+.welcome-agents {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  width: 100%;
+  max-width: 240px;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+.welcome-agent {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 0;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.welcome-agent svg {
+  width: 14px;
+  height: 14px;
+}
+.welcome-agent:hover {
+  color: var(--text);
+}
+.welcome-agent.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.theme-dark .welcome-agent.active {
+  background: var(--surface-active);
+}
+
+/* 最近打开过的项目 —— 快捷跳转 */
+.welcome-recents {
+  width: 100%;
+  margin-top: 24px;
+}
+.welcome-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 6px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-mute);
+}
+.welcome-section svg {
+  width: 12px;
+  height: 12px;
+}
+.welcome-recent {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.welcome-recent:hover {
+  background: var(--surface-hover);
+}
+.welcome-recent-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.welcome-recent.missing .welcome-recent-name {
+  color: var(--text-mute);
+  text-decoration: line-through;
+}
+.welcome-recent-go {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--text-mute);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.welcome-recent:hover .welcome-recent-go {
+  opacity: 1;
+}
+.welcome-hint {
+  margin-top: 22px;
+  font-size: 13px;
+  color: var(--text-mute);
+  text-align: center;
+}
+
 .loading {
   position: relative;
 }
@@ -1662,7 +1938,7 @@ details[open] > .block-summary > .chev {
 /* ---------- Toast ---------- */
 .toast {
   position: fixed;
-  bottom: 22px;
+  top: 52px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--text);
@@ -1732,7 +2008,7 @@ details[open] > .block-summary > .chev {
   width: 11px;
   height: 11px;
 }
-.session-card:hover .session-id-copy,
+.session-card.is-hover .session-id-copy,
 .chat-head:hover .session-id-copy {
   opacity: 0.9;
 }
@@ -1771,7 +2047,7 @@ details[open] > .block-summary > .chev {
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 .chat-head-info:hover .title-rename-ic,
-.session-card:hover .title-rename-ic {
+.session-card.is-hover .title-rename-ic {
   opacity: 0.85;
 }
 .title-rename-ic:hover {
@@ -1870,7 +2146,68 @@ details[open] > .block-summary > .chev {
 .cv-tooltip[data-placement='top'] {
   transform: translateY(-2px);
 }
+.cv-tooltip[data-placement='right'] {
+  transform: translateX(-2px);
+}
 .cv-tooltip.is-visible {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(0);
+}
+
+/* ---------- 飞线动画：删除飞向回收站 / 恢复飞回侧边栏项目列表 ---------- */
+.fly-orb {
+  position: fixed;
+  z-index: 9998;
+  pointer-events: none;
+}
+.fly-chip {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+.fly-chip svg {
+  display: block;
+}
+.fly-chip-trash {
+  background: var(--danger);
+}
+.fly-chip-restore {
+  background: var(--brand-codex);
+}
+/* 小球落入回收站图标时的"接收"脉冲 */
+.topbar-trash-btn.fly-receive {
+  animation: fly-receive-pop 0.32s cubic-bezier(0.2, 1, 0.3, 1);
+}
+/* 小球飞回某个项目行时，该行做一次轻微的绿色高亮闪动 */
+.proj-item.fly-receive {
+  animation: fly-receive-flash 0.46s ease;
+}
+@keyframes fly-receive-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.28); }
+  100% { transform: scale(1); }
+}
+@keyframes fly-receive-flash {
+  0% { background: color-mix(in srgb, var(--brand-codex) 22%, transparent); }
+  100% { background: transparent; }
+}
+/* 回收站非空时图标右上角的红点 */
+.topbar-trash-btn {
+  position: relative;
+}
+.trash-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 1.5px solid var(--surface);
+  pointer-events: none;
 }

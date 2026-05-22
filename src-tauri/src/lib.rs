@@ -104,6 +104,16 @@ fn resume_session(agent: String, session_id: String, cwd: String) -> Result<(), 
     spawn_terminal(&cli, &cwd)
 }
 
+/// 在终端里为某个项目目录开一个全新会话（不带 --resume）。
+#[tauri::command]
+fn new_session(agent: String, cwd: String) -> Result<(), String> {
+    if !Path::new(&cwd).is_dir() {
+        return Err("项目目录已不存在，无法创建会话".to_string());
+    }
+    let cli = agents::source(&agent)?.new_session_cli();
+    spawn_terminal(&cli, &cwd)
+}
+
 fn spawn_terminal(cli: &str, cwd: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -236,6 +246,37 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 在系统默认浏览器中打开一个外部链接。只放行 http/https，避免 url 被
+/// 当成本地文件或其它协议处理。
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("仅支持 http(s) 链接".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("打开链接失败: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("打开链接失败: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("打开链接失败: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Attach an empty `NSToolbar` with `unifiedCompact` style so AppKit grows the
 /// titlebar to ~40px and auto-centers the traffic lights vertically inside it
 /// — matching our 40px CSS topbar. This is the SUPPORTED AppKit way to extend
@@ -288,7 +329,9 @@ pub fn run() {
             permanent_delete_trash,
             empty_trash,
             resume_session,
+            new_session,
             reveal_in_finder,
+            open_url,
             write_file,
             app_version,
             check_update,
