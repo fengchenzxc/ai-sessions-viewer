@@ -1,10 +1,18 @@
 name: Release
 
-# Release pipeline — triggers when a `v*` tag lands on the repo.
-# Use `npm run release` locally (see package.json) to bump the version in
-# package.json / tauri.conf.json / Cargo.toml, commit, tag, and push in one
-# go; the pushed tag fires this workflow. `workflow_dispatch` is left in
-# for emergency re-runs from the Actions UI.
+# Release pipeline — triggers when a `v*` tag lands on the repo. Two stages:
+#   1) build matrix (macOS + Windows) only builds bundles and uploads them as
+#      workflow artifacts. tauri-action runs with no `tagName`, so it does NOT
+#      try to create / update a GitHub release itself.
+#   2) publish job downloads all artifacts and creates a single, published
+#      (not draft) release via softprops/action-gh-release, with auto-generated
+#      release notes (PRs since the previous tag) + a fixed "Downloads" intro.
+#
+# Use `npm run release` locally to bump the version in package.json /
+# tauri.conf.json / Cargo.toml, commit, tag, and push in one go; the pushed
+# tag fires this workflow. `workflow_dispatch` is left in for emergency
+# re-runs from the Actions UI — when triggered manually (no tag) only the
+# build job runs; the publish job is skipped via the `if: tag` guard.
 #
 # Tauri cross-compile from macOS to a Windows installer isn't practical
 # locally because NSIS/WiX bundling needs a Windows toolchain, so the
@@ -15,10 +23,16 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
+# Multiple tag pushes on the same ref shouldn't fight over the release.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -54,26 +68,59 @@ jobs:
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # No `tagName` here on purpose — without it, tauri-action only builds
+        # and never touches the GitHub release. The `publish` job handles that.
         with:
-          # When the workflow is triggered by a tag, tauri-action publishes a
-          # draft GitHub release with the bundles attached. For workflow_dispatch
-          # they just become job artifacts via the upload step below.
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
 
       - name: Upload bundle artifacts
-        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.platform }}
+          # macOS universal builds land under `target/universal-apple-darwin/release/bundle/`,
+          # plain Windows builds under `target/release/bundle/`. Glob covers both.
           path: |
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.app.tar.gz
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*-setup.exe
-          if-no-files-found: warn
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.app.tar.gz
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*-setup.exe
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # Only publish for tag pushes. `workflow_dispatch` runs build-only.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          # Published, not draft — set draft: true if you want to review on
+          # GitHub before users see it.
+          draft: false
+          prerelease: false
+          # GitHub auto-generates "What's Changed" + "New Contributors" from
+          # PRs (or direct commits) since the previous v* tag. Appended after
+          # the `body` block below.
+          generate_release_notes: true
+          files: dist/**/*
+          body: |
+            ## Downloads
+
+            - **macOS (Apple Silicon + Intel)** — `claude-session-viewer_*_universal.dmg`
+            - **Windows x64** — `claude-session-viewer_*_x64-setup.exe` / `*_x64_en-US.msi`
+
+            On macOS first launch the unsigned `.app` may prompt — right-click → **Open** to bypass Gatekeeper.
+
+            Full version history → [`CHANGELOG.md`](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
