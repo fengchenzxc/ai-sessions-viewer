@@ -23,9 +23,7 @@ mod watch;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::types::{
-    AgentStats, Msg, ProjectInfo, SearchHit, SessionPage, TrashItem, UsageSummary,
-};
+use crate::types::{AgentStats, Msg, ProjectInfo, SearchHit, SessionPage, TrashItem, UsageSummary};
 use crate::util::is_jsonl;
 
 /// 全局搜索的取消代际 —— 每次新搜索把自己的 `request_id` 写进来，正在跑的搜索循环
@@ -35,8 +33,12 @@ static SEARCH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 // ============================ Tauri 命令：分派层 ============================
 
 #[tauri::command]
-fn list_projects(agent: String) -> Result<Vec<ProjectInfo>, String> {
-    agents::source(&agent)?.list_projects()
+fn list_projects(
+    agent: String,
+    include_codex_internal: bool,
+    include_codex_archived: bool,
+) -> Result<Vec<ProjectInfo>, String> {
+    agents::source(&agent)?.list_projects(include_codex_internal, include_codex_archived)
 }
 
 #[tauri::command]
@@ -45,8 +47,16 @@ fn list_sessions(
     project_key: String,
     offset: usize,
     limit: usize,
+    include_codex_internal: bool,
+    include_codex_archived: bool,
 ) -> Result<SessionPage, String> {
-    agents::source(&agent)?.list_sessions(&project_key, offset, limit)
+    agents::source(&agent)?.list_sessions(
+        &project_key,
+        offset,
+        limit,
+        include_codex_internal,
+        include_codex_archived,
+    )
 }
 
 #[tauri::command]
@@ -92,12 +102,7 @@ fn agent_stats(agent: String) -> Result<AgentStats, String> {
 /// `scope`：`all` / `claude` / `codex` / `gemini` / `session:<agent>:<absolute path>`。
 /// `range`：`today` / `days7` / `days30` / `all`（session-scope 下忽略）。
 #[tauri::command]
-fn start_agent_stats(
-    app: tauri::AppHandle,
-    scope: String,
-    range: String,
-    request_id: u64,
-) {
+fn start_agent_stats(app: tauri::AppHandle, scope: String, range: String, request_id: u64) {
     stats::stream::start(app, scope, range, request_id);
 }
 
@@ -155,11 +160,7 @@ fn rename_session(agent: String, path: String, name: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-fn soft_delete_session(
-    agent: String,
-    path: String,
-    project_label: String,
-) -> Result<(), String> {
+fn soft_delete_session(agent: String, path: String, project_label: String) -> Result<(), String> {
     trash::soft_delete(&agent, &path, &project_label)
 }
 
@@ -190,10 +191,9 @@ fn resume_session(
     session_id: String,
     cwd: String,
     path: String,
+    terminal: Option<String>,
 ) -> Result<(), String> {
-    if !Path::new(&cwd).is_dir() {
-        return Err("项目目录已不存在，无法恢复".to_string());
-    }
+    ensure_project_dir(&cwd, "无法恢复")?;
     // id 校验：Claude/Codex 为 UUID，Gemini 为 session-<startTime>-<id8>
     if session_id.is_empty()
         || !session_id
@@ -203,32 +203,142 @@ fn resume_session(
         return Err("会话 ID 非法".to_string());
     }
     let cli = agents::source(&agent)?.resume_cli(&session_id, &path);
-    spawn_terminal(&cli, &cwd)
+    spawn_terminal(&cli, &cwd, terminal.as_deref())
 }
 
 /// 在终端里为某个项目目录开一个全新会话（不带 --resume）。
 #[tauri::command]
-fn new_session(agent: String, cwd: String) -> Result<(), String> {
-    if !Path::new(&cwd).is_dir() {
-        return Err("项目目录已不存在，无法创建会话".to_string());
-    }
+fn new_session(agent: String, cwd: String, terminal: Option<String>) -> Result<(), String> {
+    ensure_project_dir(&cwd, "无法创建会话")?;
     let cli = agents::source(&agent)?.new_session_cli();
-    spawn_terminal(&cli, &cwd)
+    spawn_terminal(&cli, &cwd, terminal.as_deref())
 }
 
-fn spawn_terminal(cli: &str, cwd: &str) -> Result<(), String> {
+fn ensure_project_dir(cwd: &str, action: &str) -> Result<(), String> {
+    if cwd.trim().is_empty() {
+        return Err(format!("项目目录为空，{action}"));
+    }
+    let path = Path::new(cwd);
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
+        }
+        return Err(format!("项目路径不是目录，{action}"));
+    }
+    fs::create_dir_all(path).map_err(|e| format!("创建项目目录失败: {e}"))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn create_terminal_script(cwd: &Path, cli: &str) -> Result<PathBuf, String> {
+    fs::create_dir_all(cwd).map_err(|e| format!("创建项目目录失败: {e}"))?;
+
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+        ^ (std::process::id() as u64);
+    let mut script_path = cwd.join(format!(".tmp{:06x}", seed & 0x00ff_ffff));
+    for i in 0..100u64 {
+        if !script_path.exists() {
+            break;
+        }
+        script_path = cwd.join(format!(
+            ".tmp{:06x}",
+            (seed.wrapping_add(i + 1)) & 0x00ff_ffff
+        ));
+    }
+
+    let cleanup_script = script_path.to_string_lossy().to_string();
+    let script = format!(
+        r#"#!/bin/zsh
+set +e
+cleanup_script={cleanup_script}
+cleanup() {{
+  rm -f -- "$cleanup_script"
+}}
+trap cleanup EXIT
+cd {cwd}
+{cli}
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo ""
+  echo "command exited with status $status"
+  echo "Press Enter to close this window..."
+  read _unused
+fi
+exit "$status"
+"#,
+        cwd = shell_quote(&cwd.to_string_lossy()),
+        cleanup_script = shell_quote(&cleanup_script),
+        cli = cli
+    );
+    fs::write(&script_path, script).map_err(|e| format!("创建终端脚本失败: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("设置终端脚本权限失败: {e}"))?;
+    }
+
+    Ok(script_path)
+}
+
+struct CommandSpec {
+    program: String,
+    args: Vec<String>,
+}
+
+fn terminal_open_command(terminal: &str, _cwd: &Path, script_path: &Path) -> CommandSpec {
+    let script = script_path.to_string_lossy().to_string();
+    match terminal.to_ascii_lowercase().as_str() {
+        "warp" => CommandSpec {
+            program: "open".to_string(),
+            args: vec!["-a".to_string(), "Warp".to_string(), script],
+        },
+        "iterm" | "iterm2" => CommandSpec {
+            program: "open".to_string(),
+            args: vec!["-a".to_string(), "iTerm".to_string(), script],
+        },
+        _ => CommandSpec {
+            program: "open".to_string(),
+            args: vec!["-a".to_string(), "Terminal".to_string(), script],
+        },
+    }
+}
+
+fn delayed_cleanup_command(script_path: &Path) -> CommandSpec {
+    CommandSpec {
+        program: "sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "sleep 20; rm -f -- \"$1\"".to_string(),
+            "cleanup".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ],
+    }
+}
+
+fn spawn_terminal(cli: &str, cwd: &str, terminal: Option<&str>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let cwd_quoted = cwd.replace('\'', "'\\''");
-        let shell_cmd = format!("cd '{cwd_quoted}' && {cli}");
-        let as_arg = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script =
-            format!("tell application \"Terminal\"\nactivate\ndo script \"{as_arg}\"\nend tell");
-        std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
+        let cwd_path = Path::new(cwd);
+        let script_path = create_terminal_script(cwd_path, cli)?;
+        let spec = terminal_open_command(terminal.unwrap_or("terminal"), cwd_path, &script_path);
+        std::process::Command::new(&spec.program)
+            .args(&spec.args)
             .spawn()
             .map_err(|e| format!("启动终端失败: {e}"))?;
+        let cleanup = delayed_cleanup_command(&script_path);
+        let _ = std::process::Command::new(&cleanup.program)
+            .args(&cleanup.args)
+            .spawn();
     }
 
     #[cfg(target_os = "windows")]
@@ -265,7 +375,10 @@ fn spawn_terminal(cli: &str, cwd: &str) -> Result<(), String> {
                     .spawn()
             } else {
                 std::process::Command::new(term)
-                    .args(["-e", &format!("bash -c '{}'", shell_cmd.replace('\'', "'\\''"))])
+                    .args([
+                        "-e",
+                        &format!("bash -c '{}'", shell_cmd.replace('\'', "'\\''")),
+                    ])
                     .spawn()
             };
             if result.is_ok() {
@@ -391,7 +504,8 @@ fn pin_traffic_lights(window: &tauri::WebviewWindow) {
         return;
     };
     unsafe {
-        let ns_window: Retained<NSWindow> = match Retained::retain(ns_window_ptr.cast::<NSWindow>()) {
+        let ns_window: Retained<NSWindow> = match Retained::retain(ns_window_ptr.cast::<NSWindow>())
+        {
             Some(w) => w,
             None => return,
         };
@@ -462,4 +576,88 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn create_terminal_script_uses_hidden_tmp_file_and_self_deletes() {
+        let dir = std::env::temp_dir().join(format!(
+            "cc-sessions-viewer-terminal-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let script = create_terminal_script(&dir, "codex resume abc-123").unwrap();
+        let name = script.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with(".tmp"));
+        assert_eq!(name.len(), 10);
+
+        let content = fs::read_to_string(&script).unwrap();
+        assert!(content.contains("cd '/"));
+        assert!(content.contains("codex resume abc-123"));
+        assert!(!content.contains("rm -f \"$0\""));
+        assert!(content.contains(&format!(
+            "cleanup_script={}",
+            shell_quote(&script.to_string_lossy())
+        )));
+        assert!(content.contains("rm -f -- \"$cleanup_script\""));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&script).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_command_removes_the_script_path_after_a_short_delay() {
+        let script = Path::new("/tmp/.tmpABC123");
+        let spec = delayed_cleanup_command(script);
+        assert_eq!(spec.program, "sh");
+        assert_eq!(
+            spec.args,
+            vec![
+                "-c",
+                "sleep 20; rm -f -- \"$1\"",
+                "cleanup",
+                "/tmp/.tmpABC123"
+            ]
+        );
+    }
+
+    #[test]
+    fn warp_open_command_opens_the_executable_script_directly() {
+        let spec = terminal_open_command(
+            "warp",
+            Path::new("/Users/me/My Project"),
+            Path::new("/Users/me/My Project/.tmpABC123"),
+        );
+        assert_eq!(spec.program, "open");
+        assert_eq!(spec.args[0], "-a");
+        assert_eq!(spec.args[1], "Warp");
+        assert_eq!(spec.args[2], "/Users/me/My Project/.tmpABC123");
+        assert!(!spec.args.iter().any(|arg| arg.contains("command=")));
+    }
+
+    #[test]
+    fn terminal_and_iterm_open_script_files_directly() {
+        let script = Path::new("/tmp/.tmpABC123");
+        let terminal = terminal_open_command("terminal", Path::new("/tmp"), script);
+        assert_eq!(terminal.program, "open");
+        assert_eq!(terminal.args, vec!["-a", "Terminal", "/tmp/.tmpABC123"]);
+
+        let iterm = terminal_open_command("iterm2", Path::new("/tmp"), script);
+        assert_eq!(iterm.program, "open");
+        assert_eq!(iterm.args, vec!["-a", "iTerm", "/tmp/.tmpABC123"]);
+    }
 }
