@@ -38,6 +38,18 @@ Claude Code, Codex, and Gemini CLI each write their session JSONL files to disk,
 
 The app is **read-only** against the originals — deletion is a soft move into `~/.claude/.session-viewer-trash/`, never `rm`.
 
+## Changes in this fork
+
+This fork is based on [jerrywu001/cc-sessions-viewer](https://github.com/jerrywu001/cc-sessions-viewer) and keeps the same Tauri + Vue + Rust architecture. Compared with the original project, it adds:
+
+- **Codex desktop parity** — Codex sessions are cross-checked against Codex app metadata, including app-list rank, first-page position, archived status, and internal guardian / auto-review subthreads.
+- **Codex filters and labels** — settings can independently show or hide Codex internal review sessions and archived sessions; the session list marks them as review or archived sessions.
+- **Terminal preference** — session resume can open in Warp, Terminal.app, or iTerm2. The app now launches temporary executable scripts instead of AppleScript typing, so no Accessibility permission is required.
+- **Safer temporary scripts** — terminal resume scripts are hidden `.tmpXXXXXX` files created inside the project directory, run `codex resume <session_id>`, and self-clean after launch with a backend cleanup fallback.
+- **Codex-style themes and font sizing** — added Codex light and Dracula dark themes, macOS font smoothing, 14px UI baseline, and 12px code / diff baseline.
+- **Stats and parser hardening** — expanded Codex/Gemini parsing, pricing/model normalization, tool/activity classification, cancellation behavior, and regression tests.
+- **Repository migration** — release/update links point to [fengchenzxc/ai-sessions-viewer](https://github.com/fengchenzxc/ai-sessions-viewer), with GitHub Actions builds publishing installers from tags.
+
 ## Features
 
 - 🗂 **Unified project view** — group sessions by working directory across both CLIs
@@ -63,7 +75,7 @@ The app is **read-only** against the originals — deletion is a soft move into 
 
 ### Pre-built
 
-Grab the latest installer from [Releases](https://github.com/jerrywu001/cc-sessions-viewer/releases):
+Grab the latest installer from [Releases](https://github.com/fengchenzxc/ai-sessions-viewer/releases):
 
 | Platform | File |
 | --- | --- |
@@ -93,8 +105,8 @@ Prereqs: **Node 20+**, **Rust stable**, plus the platform-specific toolchain:
 - **Linux** — `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, `patchelf` (on Debian/Ubuntu: `sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev patchelf`).
 
 ```bash
-git clone https://github.com/jerrywu001/cc-sessions-viewer.git
-cd cc-sessions-viewer
+git clone https://github.com/fengchenzxc/ai-sessions-viewer.git
+cd ai-sessions-viewer
 npm install
 npm run tauri dev          # dev shell
 npm run tauri build        # bundle .app / .dmg / .msi / .deb / .AppImage

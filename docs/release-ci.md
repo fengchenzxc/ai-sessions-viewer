@@ -217,7 +217,7 @@ jobs:
             - **macOS (Apple Silicon + Intel)**: `*_universal.dmg`
             - **Windows x64**: `*_x64-setup.exe` / `*_x64_en-US.msi`
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AI_SESSIONS_VIEWER_PAT }}
 ```
 
 ---

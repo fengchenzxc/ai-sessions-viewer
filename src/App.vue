@@ -986,7 +986,7 @@ async function newSession() {
 }
 
 // 顶栏右上角的仓库入口
-const REPO_URL = 'https://github.com/jerrywu001/cc-sessions-viewer'
+const REPO_URL = 'https://github.com/fengchenzxc/ai-sessions-viewer'
 function openRepo() {
   api.openUrl(REPO_URL).catch((e) => notify(`${e}`, true))
 }

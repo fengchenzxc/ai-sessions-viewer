@@ -149,4 +149,4 @@ jobs:
 
             Full version history → [`CHANGELOG.md`](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AI_SESSIONS_VIEWER_PAT }}
