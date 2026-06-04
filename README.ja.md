@@ -2,7 +2,7 @@
 
 # Claude Session Viewer
 
-[English](README.md) · [中文](README.zh-CN.md) · **日本語** · [CHANGELOG](CHANGELOG.md)
+[English](README.en.md) · [中文](README.md) · **日本語** · [CHANGELOG](CHANGELOG.md)
 
 <p align="center"><strong>Claude Code</strong>、<strong>Codex</strong>、<strong>Gemini CLI</strong> 専用のネイティブデスクトップブラウザ。3 つの CLI のローカルセッション履歴を一元的に読み取り、検索し、管理します。</p>
 
