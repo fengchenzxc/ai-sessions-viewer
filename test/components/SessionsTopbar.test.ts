@@ -27,6 +27,12 @@ const session = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   size: 100,
   messageCount: 1,
   modified: 0,
+  codexAppListRank: null,
+  codexAppListScanned: 0,
+  codexAppFirstPageSize: 50,
+  codexAppFirstPagePosition: 0,
+  codexInternal: false,
+  codexArchived: false,
   ...over,
 })
 

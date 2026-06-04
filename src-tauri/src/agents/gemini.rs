@@ -181,7 +181,11 @@ fn scan(fp: &Path) -> SessionMeta {
                 continue;
             }
             // 同 id 多次出现是 gemini 的渐进式写入，只计一次。
-            let rid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let rid = v
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             if rid.is_empty() || seen.insert(rid) {
                 message_count += 1;
             }
@@ -226,6 +230,12 @@ fn scan(fp: &Path) -> SessionMeta {
         modified,
         size,
         message_count,
+        codex_app_list_rank: None,
+        codex_app_list_scanned: 0,
+        codex_app_first_page_size: 50,
+        codex_app_first_page_position: 0,
+        codex_internal: false,
+        codex_archived: false,
     }
 }
 
@@ -444,7 +454,11 @@ impl SessionSource for GeminiSource {
         "gemini"
     }
 
-    fn list_projects(&self) -> Result<Vec<ProjectInfo>, String> {
+    fn list_projects(
+        &self,
+        _include_codex_internal: bool,
+        _include_codex_archived: bool,
+    ) -> Result<Vec<ProjectInfo>, String> {
         let mut out = Vec::new();
         let rd = match fs::read_dir(tmp_dir()) {
             Ok(rd) => rd,
@@ -500,6 +514,8 @@ impl SessionSource for GeminiSource {
         project_key: &str,
         offset: usize,
         limit: usize,
+        _include_codex_internal: bool,
+        _include_codex_archived: bool,
     ) -> Result<SessionPage, String> {
         let files = chat_files(project_key);
         let mut paired: Vec<(PathBuf, u64)> = files
@@ -710,8 +726,7 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
             usage.input_tokens = tk.get("input").and_then(Value::as_u64).unwrap_or(0);
             usage.output_tokens = tk.get("output").and_then(Value::as_u64).unwrap_or(0);
             usage.cache_read_input_tokens = tk.get("cached").and_then(Value::as_u64).unwrap_or(0);
-            usage.reasoning_output_tokens =
-                tk.get("thoughts").and_then(Value::as_u64).unwrap_or(0);
+            usage.reasoning_output_tokens = tk.get("thoughts").and_then(Value::as_u64).unwrap_or(0);
             // tool tokens：折入 output（少量、avoid 凭空丢失）
             usage.output_tokens += tk.get("tool").and_then(Value::as_u64).unwrap_or(0);
             usage = usage.finalize();
@@ -876,7 +891,10 @@ mod tests {
         assert_eq!(call.usage.cache_read_input_tokens, 200);
         assert_eq!(call.usage.reasoning_output_tokens, 30);
         assert!(call.usage.total > 0);
-        assert!(call.cost_usd > 0.0, "expected non-zero cost for gemini-2.5-flash");
+        assert!(
+            call.cost_usd > 0.0,
+            "expected non-zero cost for gemini-2.5-flash"
+        );
         // 工具
         assert!(call.tools.iter().any(|t| t == "read_file"));
         assert!(call.tools.iter().any(|t| t == "run_shell_command"));

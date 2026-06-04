@@ -116,7 +116,7 @@ fn run_worker(
             Ok(s) => s,
             Err(_) => continue,
         };
-        let projects = match src.list_projects() {
+        let projects = match src.list_projects(false, false) {
             Ok(p) => p,
             Err(_) => continue,
         };
@@ -204,12 +204,12 @@ fn run_session_scope(
     // 反查 session meta —— 用 list_sessions 找到这个 path（昂贵但一次性）
     // 更高效的做法是 read_turns + scan path 自身的 file_name，但需要先有 project；
     // 这里追求实现简单。
-    let projects = src.list_projects().unwrap_or_default();
+    let projects = src.list_projects(false, false).unwrap_or_default();
     let mut meta: Option<crate::types::SessionMeta> = None;
     let mut project_display = String::new();
     let mut project_dir = String::new();
     'outer: for p in projects {
-        if let Ok(page) = src.list_sessions(&p.dir_name, 0, usize::MAX) {
+        if let Ok(page) = src.list_sessions(&p.dir_name, 0, usize::MAX, false, false) {
             for s in page.sessions {
                 if s.path == path {
                     project_display = p.display_path.clone();

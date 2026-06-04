@@ -14,17 +14,19 @@ vi.mock('../../src/api', () => ({
 
 import SettingsModal from '../../src/components/SettingsModal.vue'
 import { vTooltip } from '../../src/tooltip'
-import { lang, setLang, setTheme, theme } from '../../src/settings'
+import { lang, setLang, setTerminalApp, setTheme, terminalApp, theme } from '../../src/settings'
 
 beforeEach(() => {
   setLang('en')
   setTheme('system')
+  setTerminalApp('terminal')
   appVersionMock.mockReset().mockResolvedValue('9.9.9')
   checkUpdateMock.mockReset()
 })
 afterEach(() => {
   setLang('en')
   setTheme('system')
+  setTerminalApp('terminal')
 })
 
 type Props = InstanceType<typeof SettingsModal>['$props']
@@ -78,6 +80,18 @@ describe('SettingsModal', () => {
 
     await select.setValue('dracula')
     expect(theme.value).toBe('dracula')
+  })
+
+  it('renders the three terminal apps and switches on click', async () => {
+    const wrapper = factory()
+    const terminalCards = wrapper.findAll('.terminal-card')
+    expect(terminalCards).toHaveLength(3)
+
+    await terminalCards[0].trigger('click') // Warp
+    expect(terminalApp.value).toBe('warp')
+
+    await terminalCards[2].trigger('click') // iTerm2
+    expect(terminalApp.value).toBe('iterm2')
   })
 
   it('loads the app version on mount', async () => {

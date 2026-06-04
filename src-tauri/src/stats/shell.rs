@@ -22,7 +22,11 @@ pub fn extract_first_command(raw_input: &str) -> Option<String> {
             .and_then(|c| c.as_str())
             .map(|s| s.to_string())
             // 也兼容 OpenAI 风格的 {"input":"..."} / {"cmd":"..."}
-            .or_else(|| v.get("input").and_then(|c| c.as_str()).map(|s| s.to_string()))
+            .or_else(|| {
+                v.get("input")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+            })
             .or_else(|| v.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string()))
             .unwrap_or_else(|| trimmed.to_string()),
         Err(_) => trimmed.to_string(),
@@ -43,10 +47,7 @@ fn first_token_of(cmd: &str) -> Option<String> {
     // 复杂引号 / 管道的语义不做（统计用，noise 可以接受）。
     let mut rest = trimmed;
     loop {
-        let token = rest
-            .split_whitespace()
-            .next()
-            .map(|s| s.to_string())?;
+        let token = rest.split_whitespace().next().map(|s| s.to_string())?;
         // 环境变量赋值（FOO=BAR cmd）：跳过这个 token，继续看下一个。
         if token.contains('=') && !token.starts_with('=') && !is_known_command(&token) {
             let after = rest[token.len()..].trim_start();
@@ -145,8 +146,14 @@ mod tests {
 
     #[test]
     fn mcp_server_basic() {
-        assert_eq!(extract_mcp_server("mcp__github__list_repos"), Some("github".to_string()));
-        assert_eq!(extract_mcp_server("mcp__chrome-devtools__click"), Some("chrome-devtools".to_string()));
+        assert_eq!(
+            extract_mcp_server("mcp__github__list_repos"),
+            Some("github".to_string())
+        );
+        assert_eq!(
+            extract_mcp_server("mcp__chrome-devtools__click"),
+            Some("chrome-devtools".to_string())
+        );
     }
 
     #[test]

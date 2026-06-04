@@ -56,8 +56,7 @@ fn state() -> &'static Mutex<Option<WatchState>> {
     STATE.get_or_init(|| Mutex::new(None))
 }
 
-fn last_count_map(
-) -> &'static Mutex<std::collections::HashMap<String, (usize, Instant)>> {
+fn last_count_map() -> &'static Mutex<std::collections::HashMap<String, (usize, Instant)>> {
     LAST_COUNT.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -101,8 +100,8 @@ pub fn watch_session(app: AppHandle, agent: String, path: String) -> Result<(), 
     let app_handle = app.clone();
     let agent_for_cb = agent.clone();
     let path_for_cb = path.clone();
-    let mut watcher: RecommendedWatcher = notify::recommended_watcher(
-        move |res: notify::Result<Event>| {
+    let mut watcher: RecommendedWatcher =
+        notify::recommended_watcher(move |res: notify::Result<Event>| {
             let Ok(ev) = res else { return };
             if !matches!(
                 ev.kind,
@@ -121,9 +120,8 @@ pub fn watch_session(app: AppHandle, agent: String, path: String) -> Result<(), 
                 return;
             }
             process_change(&app_handle, &agent_for_cb, &path_for_cb);
-        },
-    )
-    .map_err(|e| format!("notify init 失败: {e}"))?;
+        })
+        .map_err(|e| format!("notify init 失败: {e}"))?;
 
     // 仅监听这个具体文件 —— notify 内部会按平台 fallback 监听父目录后再过滤。
     watcher
@@ -222,10 +220,7 @@ fn process_change(app: &AppHandle, agent: &str, path: &str) {
 /// 测试用：当前是否有活跃 watch。
 #[cfg(test)]
 pub fn is_watching() -> bool {
-    state()
-        .lock()
-        .map(|g| g.is_some())
-        .unwrap_or(false)
+    state().lock().map(|g| g.is_some()).unwrap_or(false)
 }
 
 /// 测试用：当前 watch 的路径（如果有）。

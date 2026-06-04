@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { applyTheme, clearAppCache, lang, setLang, setTheme, theme } from '../src/settings'
+import {
+  applyTheme,
+  clearAppCache,
+  codexShowArchivedSessions,
+  codexShowInternalSessions,
+  lang,
+  setCodexShowArchivedSessions,
+  setCodexShowInternalSessions,
+  setLang,
+  setTerminalApp,
+  setTheme,
+  terminalApp,
+  theme,
+} from '../src/settings'
 
 const DARK = 'theme-dark'
 
@@ -26,6 +39,9 @@ afterEach(() => {
   document.documentElement.classList.remove(DARK)
   setLang('en')
   setTheme('system')
+  setCodexShowInternalSessions(false)
+  setCodexShowArchivedSessions(false)
+  setTerminalApp('terminal')
 })
 
 describe('setLang', () => {
@@ -98,6 +114,44 @@ describe('clearAppCache', () => {
     localStorage.setItem('projPrefs:v1', '{"pinned":[]}')
     clearAppCache()
     expect(localStorage.getItem('projPrefs:v1')).toBeNull()
+  })
+})
+
+describe('Codex session visibility preferences', () => {
+  it('defaults to hiding internal guardian and archived sessions', () => {
+    expect(codexShowInternalSessions.value).toBe(false)
+    expect(codexShowArchivedSessions.value).toBe(false)
+  })
+
+  it('persists Codex internal and archived toggles separately', () => {
+    setCodexShowInternalSessions(true)
+    setCodexShowArchivedSessions(true)
+
+    expect(codexShowInternalSessions.value).toBe(true)
+    expect(codexShowArchivedSessions.value).toBe(true)
+    expect(localStorage.getItem('codexShowInternalSessions:v1')).toBe('1')
+    expect(localStorage.getItem('codexShowArchivedSessions:v1')).toBe('1')
+
+    setCodexShowInternalSessions(false)
+    setCodexShowArchivedSessions(false)
+    expect(localStorage.getItem('codexShowInternalSessions:v1')).toBe('0')
+    expect(localStorage.getItem('codexShowArchivedSessions:v1')).toBe('0')
+  })
+})
+
+describe('terminal preference', () => {
+  it('defaults to Terminal.app', () => {
+    expect(terminalApp.value).toBe('terminal')
+  })
+
+  it('persists the selected terminal app', () => {
+    setTerminalApp('warp')
+    expect(terminalApp.value).toBe('warp')
+    expect(localStorage.getItem('terminalApp:v1')).toBe('warp')
+
+    setTerminalApp('iterm2')
+    expect(terminalApp.value).toBe('iterm2')
+    expect(localStorage.getItem('terminalApp:v1')).toBe('iterm2')
   })
 })
 

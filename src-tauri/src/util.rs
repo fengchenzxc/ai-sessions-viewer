@@ -90,7 +90,20 @@ pub fn format_iso8601_utc(secs: i64, ms: u32) -> String {
         year += 1;
     }
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month: usize = 0;
     while month < 12 && days >= mdays[month] as i64 {
         days -= mdays[month] as i64;
@@ -148,7 +161,16 @@ pub fn parse_iso8601_ms(s: &str) -> Option<i64> {
     let mdays: [i64; 12] = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     for &md in mdays.iter().take((mon - 1) as usize) {
         days += md;
@@ -193,11 +215,13 @@ pub fn append_jsonl_line(path: &Path, line: &str) -> Result<(), String> {
         .open(path)
         .map_err(|e| format!("打开会话文件失败: {e}"))?;
     if needs_nl {
-        f.write_all(b"\n").map_err(|e| format!("追加换行失败: {e}"))?;
+        f.write_all(b"\n")
+            .map_err(|e| format!("追加换行失败: {e}"))?;
     }
     f.write_all(line.as_bytes())
         .map_err(|e| format!("写入 rename 行失败: {e}"))?;
-    f.write_all(b"\n").map_err(|e| format!("写入换行失败: {e}"))?;
+    f.write_all(b"\n")
+        .map_err(|e| format!("写入换行失败: {e}"))?;
     Ok(())
 }
 

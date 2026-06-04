@@ -34,6 +34,12 @@ pub struct SessionMeta {
     pub modified: u64,
     pub size: u64,
     pub message_count: usize,
+    pub codex_app_list_rank: Option<usize>,
+    pub codex_app_list_scanned: usize,
+    pub codex_app_first_page_size: usize,
+    pub codex_app_first_page_position: usize,
+    pub codex_internal: bool,
+    pub codex_archived: bool,
 }
 
 #[derive(Serialize)]

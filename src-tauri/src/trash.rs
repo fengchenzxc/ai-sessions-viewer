@@ -103,8 +103,8 @@ pub fn restore(trash_file: &str) -> Result<(), String> {
     let td = trash_dir();
     let src = td.join(trash_file);
     let meta_path = td.join(format!("{trash_file}.meta"));
-    let s = fs::read_to_string(&meta_path)
-        .map_err(|_| "缺少元数据，无法确定恢复位置".to_string())?;
+    let s =
+        fs::read_to_string(&meta_path).map_err(|_| "缺少元数据，无法确定恢复位置".to_string())?;
     let v: Value = serde_json::from_str(&s).map_err(|e| format!("元数据损坏: {e}"))?;
     let original_path = v
         .get("originalPath")

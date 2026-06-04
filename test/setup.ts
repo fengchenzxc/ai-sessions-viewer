@@ -6,6 +6,35 @@
 // doesn't throw.
 import { afterEach, vi } from 'vitest'
 
+// --- localStorage ---------------------------------------------------------
+// Vitest 4 on newer Node can leave unqualified `localStorage` undefined at
+// module import time unless Node is launched with --localstorage-file. The app
+// reads it while importing settings.ts, so provide a small Storage-compatible
+// shim for tests.
+if (!globalThis.localStorage) {
+  const store = new Map<string, string>()
+  globalThis.localStorage = {
+    get length() {
+      return store.size
+    },
+    clear() {
+      store.clear()
+    },
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null
+    },
+    removeItem(key: string) {
+      store.delete(key)
+    },
+    setItem(key: string, value: string) {
+      store.set(key, String(value))
+    },
+  } as Storage
+}
+
 // --- window.matchMedia ----------------------------------------------------
 // Default to light mode (matches: false). Individual tests override
 // `window.matchMedia` with vi.stubGlobal when they need dark mode.

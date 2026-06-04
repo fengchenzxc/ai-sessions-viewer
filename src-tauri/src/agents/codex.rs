@@ -6,15 +6,24 @@
 // 和工具调用细节。
 
 use std::collections::HashMap;
+use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+use serde_json::{json, Map};
 
 use super::SessionSource;
-use crate::stats::{pricing, shell as shell_util, types::{CallRecord, Turn}};
+use crate::stats::{
+    pricing, shell as shell_util,
+    types::{CallRecord, Turn},
+};
 use crate::types::{Block, Msg, ProjectInfo, SessionMeta, SessionPage, UsageSummary};
 use crate::util::{
     append_jsonl_line, clean_title, format_iso8601_utc, home, is_jsonl, mtime_millis,
@@ -23,8 +32,16 @@ use crate::util::{
 
 pub struct CodexSource;
 
+const CODEX_APP_FIRST_PAGE_SIZE: usize = 50;
+const CODEX_APP_LIST_PAGE_SIZE: usize = 100;
+const CODEX_APP_LIST_MAX_THREADS: usize = 1_000;
+
 fn sessions_dir() -> PathBuf {
     home().join(".codex").join("sessions")
+}
+
+fn archived_sessions_dir() -> PathBuf {
+    home().join(".codex").join("archived_sessions")
 }
 
 /// 在 ~/.codex 下找编号最大的 state_<N>.sqlite —— codex 用版本号区分 schema，
@@ -56,10 +73,141 @@ struct Meta {
     created: Option<String>,
 }
 
-/// 递归收集 ~/.codex/sessions 下所有 rollout-*.jsonl。
-fn all_files() -> Vec<PathBuf> {
+#[derive(Debug, Clone)]
+struct CodexAppThreadInfo {
+    rank: usize,
+}
+
+#[derive(Debug)]
+struct CodexAppListSnapshot {
+    available: bool,
+    scanned: usize,
+    first_page_size: usize,
+    threads: HashMap<String, CodexAppThreadInfo>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct CodexThreadFlags {
+    internal: bool,
+    archived: bool,
+}
+
+#[derive(Debug, Default)]
+struct CodexThreadFlagsIndex {
+    by_id: HashMap<String, CodexThreadFlags>,
+    by_path: HashMap<String, CodexThreadFlags>,
+}
+
+fn is_archived_path(path: &Path) -> bool {
+    path.starts_with(archived_sessions_dir())
+}
+
+fn load_thread_flags_index() -> CodexThreadFlagsIndex {
+    let Some(db_path) = find_state_db() else {
+        return CodexThreadFlagsIndex::default();
+    };
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(conn) => conn,
+        Err(_) => return CodexThreadFlagsIndex::default(),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT id, rollout_path, archived, has_user_event, source, thread_source, model FROM threads",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return CodexThreadFlagsIndex::default(),
+    };
+    let rows = match stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let rollout_path: String = row.get(1)?;
+        let archived: i64 = row.get(2)?;
+        let has_user_event: i64 = row.get(3)?;
+        let source: String = row.get(4).unwrap_or_default();
+        let thread_source: Option<String> = row.get(5).unwrap_or_default();
+        let model: Option<String> = row.get(6).unwrap_or_default();
+        let flags = thread_flags_from_fields(
+            archived != 0,
+            has_user_event,
+            &source,
+            thread_source.as_deref(),
+            model.as_deref(),
+        );
+        Ok((id, rollout_path, flags))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return CodexThreadFlagsIndex::default(),
+    };
+    let mut index = CodexThreadFlagsIndex::default();
+    for row in rows.flatten() {
+        let (id, rollout_path, flags) = row;
+        index.by_path.insert(rollout_path, flags);
+        index.by_id.insert(id, flags);
+    }
+    index
+}
+
+fn thread_flags_from_fields(
+    archived: bool,
+    _has_user_event: i64,
+    source: &str,
+    thread_source: Option<&str>,
+    model: Option<&str>,
+) -> CodexThreadFlags {
+    let source_lc = source.to_lowercase();
+    let thread_source_lc = thread_source.unwrap_or_default().to_lowercase();
+    let model_lc = model.unwrap_or_default().to_lowercase();
+    let internal = thread_source_lc == "subagent"
+        || source_lc.contains("guardian")
+        || model_lc == "codex-auto-review";
+    CodexThreadFlags { internal, archived }
+}
+
+fn flags_for(fp: &Path, meta: &Meta, index: &CodexThreadFlagsIndex) -> CodexThreadFlags {
+    let path = fp.to_string_lossy().to_string();
+    let mut flags = index
+        .by_id
+        .get(&meta.id)
+        .or_else(|| index.by_path.get(&path))
+        .copied()
+        .unwrap_or_default();
+    if is_archived_path(fp) {
+        flags.archived = true;
+    }
+    flags
+}
+
+fn include_by_flags(
+    flags: CodexThreadFlags,
+    include_internal: bool,
+    include_archived: bool,
+) -> bool {
+    if flags.archived {
+        return include_archived;
+    }
+    if flags.internal {
+        return include_internal;
+    }
+    true
+}
+
+impl Default for CodexAppListSnapshot {
+    fn default() -> Self {
+        Self {
+            available: false,
+            scanned: 0,
+            first_page_size: CODEX_APP_FIRST_PAGE_SIZE,
+            threads: HashMap::new(),
+        }
+    }
+}
+
+/// 递归收集 Codex rollout JSONL。默认只扫 ~/.codex/sessions；
+/// 用户显式打开“已归档会话”时再额外扫 ~/.codex/archived_sessions。
+fn all_files(include_archived: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     collect_jsonl(&sessions_dir(), &mut out);
+    if include_archived {
+        collect_jsonl(&archived_sessions_dir(), &mut out);
+    }
     out
 }
 
@@ -73,6 +221,220 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
                 out.push(p);
             }
         }
+    }
+}
+
+fn augmented_path() -> String {
+    let current = env::var("PATH").unwrap_or_default();
+    let additions = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ];
+    let mut parts: Vec<String> = additions.iter().map(|value| value.to_string()).collect();
+    parts.extend(
+        current
+            .split(':')
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+    );
+    parts.dedup();
+    parts.join(":")
+}
+
+fn codex_cli_path() -> PathBuf {
+    if let Ok(path) = env::var("CODEX_CLI") {
+        let candidate = PathBuf::from(path);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    for candidate in [
+        "/opt/homebrew/bin/codex",
+        "/usr/local/bin/codex",
+        "/usr/bin/codex",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.exists() {
+            return path;
+        }
+    }
+    PathBuf::from("codex")
+}
+
+fn app_server_response(
+    rx: &mpsc::Receiver<String>,
+    id: i64,
+    timeout: Duration,
+) -> Result<Value, String> {
+    loop {
+        let line = rx
+            .recv_timeout(timeout)
+            .map_err(|_| format!("等待 app-server 响应超时: {id}"))?;
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if value.get("id").and_then(Value::as_i64) != Some(id) {
+            continue;
+        }
+        if let Some(error) = value.get("error") {
+            return Err(format!("app-server 错误: {error}"));
+        }
+        return Ok(value.get("result").cloned().unwrap_or(Value::Null));
+    }
+}
+
+fn query_codex_app_thread_list() -> CodexAppListSnapshot {
+    let result = (|| -> Result<CodexAppListSnapshot, String> {
+        let mut child = Command::new(codex_cli_path())
+            .args(["app-server", "--stdio"])
+            .env("PATH", augmented_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("启动 codex app-server 失败: {e}"))?;
+
+        let scan = (|| -> Result<CodexAppListSnapshot, String> {
+            if let Some(stderr) = child.stderr.take() {
+                thread::spawn(move || {
+                    let mut reader = BufReader::new(stderr);
+                    let mut sink = String::new();
+                    let _ = reader.read_to_string(&mut sink);
+                });
+            }
+
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| "app-server stdout 不可用".to_string())?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| "app-server stdin 不可用".to_string())?;
+
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().map_while(Result::ok) {
+                    let _ = tx.send(line);
+                }
+            });
+
+            writeln!(
+                stdin,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {
+                            "name": "cc-sessions-viewer",
+                            "version": env!("CARGO_PKG_VERSION"),
+                        },
+                        "capabilities": { "experimentalApi": true },
+                    },
+                })
+            )
+            .map_err(|e| format!("写入 initialize 失败: {e}"))?;
+            stdin
+                .flush()
+                .map_err(|e| format!("flush initialize 失败: {e}"))?;
+            let _ = app_server_response(&rx, 1, Duration::from_secs(5))?;
+
+            let mut threads = HashMap::new();
+            let mut cursor: Option<String> = None;
+            let mut rank = 0usize;
+            let mut request_id = 2i64;
+
+            loop {
+                let limit = if cursor.is_none() {
+                    CODEX_APP_FIRST_PAGE_SIZE
+                } else {
+                    CODEX_APP_LIST_PAGE_SIZE
+                };
+                let mut params = Map::new();
+                params.insert("limit".into(), json!(limit));
+                params.insert("archived".into(), json!(false));
+                params.insert("sortKey".into(), json!("updated_at"));
+                params.insert("sortDirection".into(), json!("desc"));
+                if let Some(cursor_value) = cursor.clone() {
+                    params.insert("cursor".into(), json!(cursor_value));
+                }
+
+                writeln!(
+                    stdin,
+                    "{}",
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "thread/list",
+                        "params": Value::Object(params),
+                    })
+                )
+                .map_err(|e| format!("写入 thread/list 失败: {e}"))?;
+                stdin
+                    .flush()
+                    .map_err(|e| format!("flush thread/list 失败: {e}"))?;
+                let response = app_server_response(&rx, request_id, Duration::from_secs(8))?;
+                request_id += 1;
+
+                if let Some(data) = response.get("data").and_then(Value::as_array) {
+                    for item in data {
+                        if let Some(id) = item.get("id").and_then(Value::as_str) {
+                            rank += 1;
+                            threads
+                                .entry(id.to_string())
+                                .or_insert(CodexAppThreadInfo { rank });
+                        }
+                    }
+                }
+
+                cursor = response
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                if cursor.is_none() || rank >= CODEX_APP_LIST_MAX_THREADS {
+                    break;
+                }
+            }
+
+            Ok(CodexAppListSnapshot {
+                available: true,
+                scanned: rank,
+                first_page_size: CODEX_APP_FIRST_PAGE_SIZE,
+                threads,
+            })
+        })();
+        let _ = child.kill();
+        let _ = child.wait();
+        scan
+    })();
+
+    result.unwrap_or_default()
+}
+
+fn apply_codex_app_list_snapshot(sessions: &mut [SessionMeta], snapshot: &CodexAppListSnapshot) {
+    for session in sessions {
+        session.codex_app_first_page_size = snapshot.first_page_size;
+        if !snapshot.available {
+            session.codex_app_list_rank = None;
+            session.codex_app_list_scanned = 0;
+            session.codex_app_first_page_position = 0;
+            continue;
+        }
+        let info = snapshot.threads.get(&session.id);
+        session.codex_app_list_scanned = snapshot.scanned;
+        session.codex_app_list_rank = info.map(|item| item.rank);
+        session.codex_app_first_page_position = info
+            .filter(|item| item.rank <= snapshot.first_page_size)
+            .map(|item| item.rank)
+            .unwrap_or(0);
     }
 }
 
@@ -145,9 +507,7 @@ fn first_user_text(fp: &Path) -> String {
                         .and_then(|x| x.as_str())
                         .unwrap_or("");
                     if pt == "user_message" {
-                        if let Some(m) =
-                            p.and_then(|p| p.get("message")).and_then(|x| x.as_str())
-                        {
+                        if let Some(m) = p.and_then(|p| p.get("message")).and_then(|x| x.as_str()) {
                             let c = clean_title(m);
                             if !c.is_empty() {
                                 return c;
@@ -198,7 +558,12 @@ fn output_text(v: Option<&Value>) -> String {
     }
 }
 
-fn scan(fp: &Path, m: &Meta, title_index: &HashMap<String, String>) -> SessionMeta {
+fn scan(
+    fp: &Path,
+    m: &Meta,
+    title_index: &HashMap<String, String>,
+    flags: CodexThreadFlags,
+) -> SessionMeta {
     let file_name = fp
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -279,6 +644,12 @@ fn scan(fp: &Path, m: &Meta, title_index: &HashMap<String, String>) -> SessionMe
         modified,
         size,
         message_count,
+        codex_app_list_rank: None,
+        codex_app_list_scanned: 0,
+        codex_app_first_page_size: 50,
+        codex_app_first_page_position: 0,
+        codex_internal: flags.internal,
+        codex_archived: flags.archived,
     }
 }
 
@@ -438,10 +809,19 @@ impl SessionSource for CodexSource {
         "codex"
     }
 
-    fn list_projects(&self) -> Result<Vec<ProjectInfo>, String> {
+    fn list_projects(
+        &self,
+        include_codex_internal: bool,
+        include_codex_archived: bool,
+    ) -> Result<Vec<ProjectInfo>, String> {
         let mut map: HashMap<String, (usize, u64)> = HashMap::new();
-        for fp in all_files() {
+        let flags_index = load_thread_flags_index();
+        for fp in all_files(include_codex_archived) {
             if let Some(m) = meta(&fp) {
+                let flags = flags_for(&fp, &m, &flags_index);
+                if !include_by_flags(flags, include_codex_internal, include_codex_archived) {
+                    continue;
+                }
                 let mt = mtime_millis(&fp);
                 let entry = map.entry(m.cwd).or_insert((0, 0));
                 entry.0 += 1;
@@ -472,14 +852,21 @@ impl SessionSource for CodexSource {
         project_key: &str,
         offset: usize,
         limit: usize,
+        include_codex_internal: bool,
+        include_codex_archived: bool,
     ) -> Result<SessionPage, String> {
         // 廉价阶段：只读每个文件首行 session_meta，筛出本项目的文件并取修改时间。
-        let mut matched: Vec<(PathBuf, Meta, u64)> = Vec::new();
-        for fp in all_files() {
+        let mut matched: Vec<(PathBuf, Meta, u64, CodexThreadFlags)> = Vec::new();
+        let flags_index = load_thread_flags_index();
+        for fp in all_files(include_codex_archived) {
             if let Some(m) = meta(&fp) {
                 if m.cwd == project_key {
+                    let flags = flags_for(&fp, &m, &flags_index);
+                    if !include_by_flags(flags, include_codex_internal, include_codex_archived) {
+                        continue;
+                    }
                     let mt = mtime_millis(&fp);
-                    matched.push((fp, m, mt));
+                    matched.push((fp, m, mt, flags));
                 }
             }
         }
@@ -488,12 +875,16 @@ impl SessionSource for CodexSource {
         // Codex 把会话标题缓存在 ~/.codex/session_index.jsonl（append-only，同 id
         // 多条时最新一条胜出）。列表整页加载一次即可，避免每个会话都重读一次文件。
         let title_index = load_title_index();
-        let sessions = matched
+        let mut sessions: Vec<SessionMeta> = matched
             .iter()
             .skip(offset)
             .take(limit)
-            .map(|(p, m, _)| scan(p, m, &title_index))
+            .map(|(p, m, _, flags)| scan(p, m, &title_index, *flags))
             .collect();
+        if limit != usize::MAX {
+            let snapshot = query_codex_app_thread_list();
+            apply_codex_app_list_snapshot(&mut sessions, &snapshot);
+        }
         Ok(SessionPage { total, sessions })
     }
 
@@ -601,8 +992,7 @@ impl SessionSource for CodexSource {
             }
             tmp.flush().map_err(|e| format!("flush 失败: {e}"))?;
         }
-        fs::rename(&tmp_path, &idx_path)
-            .map_err(|e| format!("替换 session_index 失败: {e}"))?;
+        fs::rename(&tmp_path, &idx_path).map_err(|e| format!("替换 session_index 失败: {e}"))?;
 
         // 3) 真正权威：~/.codex/state_<N>.sqlite 的 threads.title 列。
         // 如果只改 session_index.jsonl 不改 sqlite，picker 仍会显示旧 title。
@@ -728,7 +1118,10 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                 if let Some(prev) = cur.take() {
                     turns.push(prev);
                 }
-                let text = payload.get("message").and_then(|x| x.as_str()).unwrap_or("");
+                let text = payload
+                    .get("message")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("");
                 cur = Some(Turn {
                     user_message: text.to_string(),
                     project_path: project_path.clone(),
@@ -822,11 +1215,15 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                 );
             }
             ("event_msg", "token_count") => {
-                let Some(info) = payload.get("info") else { continue };
+                let Some(info) = payload.get("info") else {
+                    continue;
+                };
                 if info.is_null() {
                     continue;
                 }
-                let Some(tt) = info.get("total_token_usage") else { continue };
+                let Some(tt) = info.get("total_token_usage") else {
+                    continue;
+                };
                 last_usage = read_codex_total_usage(tt);
             }
             _ => {}
@@ -918,9 +1315,15 @@ fn usage_summary(fp: &Path) -> Result<UsageSummary, String> {
 /// 时被夸大到 8~10×（codeburn 同样按减法处理）。
 fn read_codex_total_usage(t: &Value) -> UsageSummary {
     let total_input = t.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
-    let cached = t.get("cached_input_tokens").and_then(Value::as_u64).unwrap_or(0);
+    let cached = t
+        .get("cached_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let output = t.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
-    let reasoning = t.get("reasoning_output_tokens").and_then(Value::as_u64).unwrap_or(0);
+    let reasoning = t
+        .get("reasoning_output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     UsageSummary {
         // saturating_sub 防御性：极少数情况下 cached > total_input（API 抖动），
         // 此时把 new-input 当 0 处理，cached 仍然保留。
@@ -954,11 +1357,14 @@ mod tests {
     fn usage_takes_the_last_non_null_token_count_event() {
         // 早期 info:null 的事件被跳过；后面的累积值（total_token_usage）覆盖。
         // input_tokens 字段 codex 报的是"含 cached"的总输入，本函数会减出来。
-        let p = write_temp("codex-last.jsonl", &[
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#,
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":30,"output_tokens":40,"reasoning_output_tokens":20,"total_tokens":190}}}}"#,
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"cached_input_tokens":60,"output_tokens":80,"reasoning_output_tokens":35,"total_tokens":375}}}}"#,
-        ]);
+        let p = write_temp(
+            "codex-last.jsonl",
+            &[
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":30,"output_tokens":40,"reasoning_output_tokens":20,"total_tokens":190}}}}"#,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"cached_input_tokens":60,"output_tokens":80,"reasoning_output_tokens":35,"total_tokens":375}}}}"#,
+            ],
+        );
         let u = usage_summary(&p).unwrap();
         // 最后一条 total: input=200 含 60 cached → new input = 140
         assert_eq!(u.input_tokens, 140);
@@ -972,9 +1378,12 @@ mod tests {
     #[test]
     fn usage_handles_cached_greater_than_input_defensively() {
         // 防御性：API 抖动时 cached > input —— new input 应该按 0 处理而不是 panic。
-        let p = write_temp("codex-defensive.jsonl", &[
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":100,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":160}}}}"#,
-        ]);
+        let p = write_temp(
+            "codex-defensive.jsonl",
+            &[
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":100,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":160}}}}"#,
+            ],
+        );
         let u = usage_summary(&p).unwrap();
         assert_eq!(u.input_tokens, 0);
         assert_eq!(u.cache_read_input_tokens, 100);
@@ -982,10 +1391,13 @@ mod tests {
 
     #[test]
     fn usage_ignores_unrelated_events() {
-        let p = write_temp("codex-noise.jsonl", &[
-            r#"{"type":"response_item","payload":{"type":"message"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"user_message"}}"#,
-        ]);
+        let p = write_temp(
+            "codex-noise.jsonl",
+            &[
+                r#"{"type":"response_item","payload":{"type":"message"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"user_message"}}"#,
+            ],
+        );
         assert_eq!(usage_summary(&p).unwrap(), UsageSummary::default());
     }
 
@@ -996,44 +1408,73 @@ mod tests {
     }
 
     #[test]
+    fn thread_flags_do_not_treat_missing_user_event_alone_as_internal() {
+        let flags =
+            thread_flags_from_fields(false, 0, r#"{"local":true}"#, None, Some("gpt-5-codex"));
+        assert!(!flags.internal);
+        assert!(!flags.archived);
+    }
+
+    #[test]
+    fn thread_flags_detect_guardian_subagent_and_archive_independently() {
+        let flags = thread_flags_from_fields(
+            true,
+            0,
+            r#"{"subagent":{"other":"guardian"}}"#,
+            Some("subagent"),
+            Some("codex-auto-review"),
+        );
+        assert!(flags.internal);
+        assert!(flags.archived);
+        assert!(include_by_flags(flags, false, true));
+    }
+
+    #[test]
     fn read_turns_picks_up_model_from_turn_context_so_cost_is_nonzero() {
         // 回归：早期实现只看 session_meta.originator.model / .model；真实 codex JSONL 的
         // session_meta.originator 是字符串（"codex-tui"），model 字段不存在 → 全 session $0。
         // 现在 turn_context.payload.model 是真正的 model 源。
-        let p = write_temp("codex-turn-context-model.jsonl", &[
-            r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/tmp","originator":"codex-tui"}}"#,
-            r#"{"type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"agent_message","message":"hey"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":500,"reasoning_output_tokens":0,"total_tokens":1500}}}}"#,
-        ]);
+        let p = write_temp(
+            "codex-turn-context-model.jsonl",
+            &[
+                r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/tmp","originator":"codex-tui"}}"#,
+                r#"{"type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"agent_message","message":"hey"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":500,"reasoning_output_tokens":0,"total_tokens":1500}}}}"#,
+            ],
+        );
         let turns = read_turns(&p);
         let last_call = turns
             .last()
             .and_then(|t| t.calls.last())
             .expect("expected at least one call");
         assert_eq!(last_call.model, "gpt-5");
-        assert!(last_call.cost_usd > 0.0, "expected non-zero cost, got {}", last_call.cost_usd);
+        assert!(
+            last_call.cost_usd > 0.0,
+            "expected non-zero cost, got {}",
+            last_call.cost_usd
+        );
     }
 
     #[test]
     fn read_turns_uses_latest_turn_context_when_model_changes_mid_session() {
         // mid-session 切模型（gpt-5.3-codex → gpt-5.5），最后一条 turn_context 胜出。
-        let p = write_temp("codex-model-switch.jsonl", &[
-            r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/tmp","originator":"codex-tui"}}"#,
-            r#"{"type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5.3-codex"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"user_message","message":"a"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"agent_message","message":"b"}}"#,
-            r#"{"type":"turn_context","payload":{"turn_id":"t2","model":"gpt-5.5"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"user_message","message":"c"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"agent_message","message":"d"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":500,"reasoning_output_tokens":0,"total_tokens":1500}}}}"#,
-        ]);
+        let p = write_temp(
+            "codex-model-switch.jsonl",
+            &[
+                r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/tmp","originator":"codex-tui"}}"#,
+                r#"{"type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5.3-codex"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"user_message","message":"a"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"agent_message","message":"b"}}"#,
+                r#"{"type":"turn_context","payload":{"turn_id":"t2","model":"gpt-5.5"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"user_message","message":"c"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"agent_message","message":"d"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":500,"reasoning_output_tokens":0,"total_tokens":1500}}}}"#,
+            ],
+        );
         let turns = read_turns(&p);
-        let last_call = turns
-            .last()
-            .and_then(|t| t.calls.last())
-            .expect("call");
+        let last_call = turns.last().and_then(|t| t.calls.last()).expect("call");
         assert_eq!(last_call.model, "gpt-5.5");
     }
 
@@ -1041,7 +1482,7 @@ mod tests {
     #[ignore = "manual full-scan; reads every Codex rollout on disk"]
     fn dedup_full_codex_scan() {
         let src = CodexSource;
-        let projects = src.list_projects().unwrap();
+        let projects = src.list_projects(false, false).unwrap();
         let mut agg = crate::stats::aggregate::Aggregator::new();
         for p in &projects {
             let sessions = src.discover_stats_sessions(&p.dir_name).unwrap_or_default();
@@ -1065,8 +1506,20 @@ mod tests {
         eprintln!("sessions: {}", s.session_count);
         eprintln!("calls: {}", s.call_count);
         eprintln!("cost: ${:.2}", s.cost_usd);
-        eprintln!("input: {} ({:.1}M)", s.usage.input_tokens, s.usage.input_tokens as f64 / 1e6);
-        eprintln!("output: {} ({:.1}M)", s.usage.output_tokens, s.usage.output_tokens as f64 / 1e6);
-        eprintln!("cache_read: {} ({:.1}M)", s.usage.cache_read_input_tokens, s.usage.cache_read_input_tokens as f64 / 1e6);
+        eprintln!(
+            "input: {} ({:.1}M)",
+            s.usage.input_tokens,
+            s.usage.input_tokens as f64 / 1e6
+        );
+        eprintln!(
+            "output: {} ({:.1}M)",
+            s.usage.output_tokens,
+            s.usage.output_tokens as f64 / 1e6
+        );
+        eprintln!(
+            "cache_read: {} ({:.1}M)",
+            s.usage.cache_read_input_tokens,
+            s.usage.cache_read_input_tokens as f64 / 1e6
+        );
     }
 }

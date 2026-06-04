@@ -49,67 +49,199 @@ type Row = (&'static str, f64, f64, Option<f64>, Option<f64>);
 
 const PRICING: &[Row] = &[
     // ---------- Claude 4.x ----------
-    ("claude-opus-4-7",      0.000005,  0.000025,   Some(0.00000625), Some(0.0000005)),
-    ("claude-opus-4-6",      0.000005,  0.000025,   Some(0.00000625), Some(0.0000005)),
-    ("claude-opus-4-5",      0.000005,  0.000025,   Some(0.00000625), Some(0.0000005)),
-    ("claude-opus-4-1",      0.000015,  0.000075,   Some(0.00001875), Some(0.0000015)),
-    ("claude-opus-4",        0.000015,  0.000075,   Some(0.00001875), Some(0.0000015)),
-    ("claude-sonnet-4-6",    0.000003,  0.000015,   Some(0.00000375), Some(0.0000003)),
-    ("claude-sonnet-4-5",    0.000003,  0.000015,   Some(0.00000375), Some(0.0000003)),
-    ("claude-sonnet-4",      0.000003,  0.000015,   Some(0.00000375), Some(0.0000003)),
-    ("claude-haiku-4-5",     0.000001,  0.000005,   Some(0.00000125), Some(0.0000001)),
+    (
+        "claude-opus-4-7",
+        0.000005,
+        0.000025,
+        Some(0.00000625),
+        Some(0.0000005),
+    ),
+    (
+        "claude-opus-4-6",
+        0.000005,
+        0.000025,
+        Some(0.00000625),
+        Some(0.0000005),
+    ),
+    (
+        "claude-opus-4-5",
+        0.000005,
+        0.000025,
+        Some(0.00000625),
+        Some(0.0000005),
+    ),
+    (
+        "claude-opus-4-1",
+        0.000015,
+        0.000075,
+        Some(0.00001875),
+        Some(0.0000015),
+    ),
+    (
+        "claude-opus-4",
+        0.000015,
+        0.000075,
+        Some(0.00001875),
+        Some(0.0000015),
+    ),
+    (
+        "claude-sonnet-4-6",
+        0.000003,
+        0.000015,
+        Some(0.00000375),
+        Some(0.0000003),
+    ),
+    (
+        "claude-sonnet-4-5",
+        0.000003,
+        0.000015,
+        Some(0.00000375),
+        Some(0.0000003),
+    ),
+    (
+        "claude-sonnet-4",
+        0.000003,
+        0.000015,
+        Some(0.00000375),
+        Some(0.0000003),
+    ),
+    (
+        "claude-haiku-4-5",
+        0.000001,
+        0.000005,
+        Some(0.00000125),
+        Some(0.0000001),
+    ),
     // ---------- Claude 3.x ----------
-    ("claude-3-7-sonnet",    0.000003,  0.000015,   None,             None),
-    ("claude-3-5-sonnet",    0.000003,  0.000015,   None,             None),
-    ("claude-3-5-haiku",     0.0000008, 0.000004,   None,             None),
-    ("claude-3-opus",        0.000015,  0.000075,   None,             None),
-    ("claude-3-sonnet",      0.000003,  0.000015,   None,             None),
-    ("claude-3-haiku",       0.00000025,0.00000125, None,             None),
+    ("claude-3-7-sonnet", 0.000003, 0.000015, None, None),
+    ("claude-3-5-sonnet", 0.000003, 0.000015, None, None),
+    ("claude-3-5-haiku", 0.0000008, 0.000004, None, None),
+    ("claude-3-opus", 0.000015, 0.000075, None, None),
+    ("claude-3-sonnet", 0.000003, 0.000015, None, None),
+    ("claude-3-haiku", 0.00000025, 0.00000125, None, None),
     // ---------- OpenAI / Codex ----------
-    ("gpt-5.3-codex",        0.00000175,0.000014,   None,             Some(0.000000175)),
-    ("gpt-5.1-codex-mini",   0.0000005, 0.000002,   None,             Some(0.00000005)),
-    ("gpt-5.1-codex",        0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5-codex",          0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.5-pro",          0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.4-pro",          0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.2-pro",          0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5-pro",            0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.5",              0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.4",              0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.3",              0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.2",              0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5.1",              0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-5",                0.00000125,0.00001,    None,             Some(0.000000125)),
-    ("gpt-4o-mini",          0.00000015,0.0000006,  None,             Some(0.000000075)),
-    ("gpt-4o",               0.0000025, 0.00001,    None,             Some(0.00000125)),
-    ("gpt-4.1-nano",         0.0000001, 0.0000004,  None,             Some(0.000000025)),
-    ("gpt-4.1-mini",         0.0000004, 0.0000016,  None,             Some(0.0000001)),
-    ("gpt-4.1",              0.000002,  0.000008,   None,             Some(0.0000005)),
-    ("o4-mini",              0.0000011, 0.0000044,  None,             Some(0.000000275)),
-    ("o3-mini",              0.0000011, 0.0000044,  None,             Some(0.00000055)),
-    ("o3",                   0.000002,  0.000008,   None,             Some(0.0000005)),
+    (
+        "gpt-5.3-codex",
+        0.00000175,
+        0.000014,
+        None,
+        Some(0.000000175),
+    ),
+    (
+        "gpt-5.1-codex-mini",
+        0.0000005,
+        0.000002,
+        None,
+        Some(0.00000005),
+    ),
+    (
+        "gpt-5.1-codex",
+        0.00000125,
+        0.00001,
+        None,
+        Some(0.000000125),
+    ),
+    ("gpt-5-codex", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.5-pro", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.4-pro", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.2-pro", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5-pro", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.5", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.4", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.3", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.2", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5.1", 0.00000125, 0.00001, None, Some(0.000000125)),
+    ("gpt-5", 0.00000125, 0.00001, None, Some(0.000000125)),
+    (
+        "gpt-4o-mini",
+        0.00000015,
+        0.0000006,
+        None,
+        Some(0.000000075),
+    ),
+    ("gpt-4o", 0.0000025, 0.00001, None, Some(0.00000125)),
+    (
+        "gpt-4.1-nano",
+        0.0000001,
+        0.0000004,
+        None,
+        Some(0.000000025),
+    ),
+    ("gpt-4.1-mini", 0.0000004, 0.0000016, None, Some(0.0000001)),
+    ("gpt-4.1", 0.000002, 0.000008, None, Some(0.0000005)),
+    ("o4-mini", 0.0000011, 0.0000044, None, Some(0.000000275)),
+    ("o3-mini", 0.0000011, 0.0000044, None, Some(0.00000055)),
+    ("o3", 0.000002, 0.000008, None, Some(0.0000005)),
     // ---------- Google / Gemini ----------
-    ("gemini-3.1-pro-preview",   0.00000125,0.00001,    None, Some(0.000000125)),
-    ("gemini-3-flash-preview",   0.0000003, 0.0000025,  None, Some(0.00000003)),
-    ("gemini-3-pro-preview",     0.00000125,0.00001,    None, Some(0.000000125)),
-    ("gemini-2.5-pro",           0.00000125,0.00001,    None, Some(0.000000125)),
-    ("gemini-2.5-flash-lite",    0.0000001, 0.0000004,  None, Some(0.000000025)),
-    ("gemini-2.5-flash",         0.0000003, 0.0000025,  None, Some(0.00000003)),
-    ("gemini-2.0-flash-lite",    0.000000075,0.0000003, None, Some(0.00000001875)),
-    ("gemini-2.0-flash",         0.0000001, 0.0000004,  None, Some(0.000000025)),
+    (
+        "gemini-3.1-pro-preview",
+        0.00000125,
+        0.00001,
+        None,
+        Some(0.000000125),
+    ),
+    (
+        "gemini-3-flash-preview",
+        0.0000003,
+        0.0000025,
+        None,
+        Some(0.00000003),
+    ),
+    (
+        "gemini-3-pro-preview",
+        0.00000125,
+        0.00001,
+        None,
+        Some(0.000000125),
+    ),
+    (
+        "gemini-2.5-pro",
+        0.00000125,
+        0.00001,
+        None,
+        Some(0.000000125),
+    ),
+    (
+        "gemini-2.5-flash-lite",
+        0.0000001,
+        0.0000004,
+        None,
+        Some(0.000000025),
+    ),
+    (
+        "gemini-2.5-flash",
+        0.0000003,
+        0.0000025,
+        None,
+        Some(0.00000003),
+    ),
+    (
+        "gemini-2.0-flash-lite",
+        0.000000075,
+        0.0000003,
+        None,
+        Some(0.00000001875),
+    ),
+    (
+        "gemini-2.0-flash",
+        0.0000001,
+        0.0000004,
+        None,
+        Some(0.000000025),
+    ),
 ];
 
 /// 内置别名表 —— 把厂商 / IDE 多写的"花式名"映射到 PRICING 里的 canonical key。
 /// 同义于 codeburn 的 BUILTIN_ALIASES；只挑了三个 CLI 实际可能出现的几条。
 const ALIASES: &[(&str, &str)] = &[
-    ("claude-opus-4.7",         "claude-opus-4-7"),
-    ("claude-opus-4.6",         "claude-opus-4-6"),
-    ("claude-opus-4.5",         "claude-opus-4-5"),
-    ("claude-sonnet-4.6",       "claude-sonnet-4-6"),
-    ("claude-sonnet-4.5",       "claude-sonnet-4-5"),
-    ("claude-haiku-4.5",        "claude-haiku-4-5"),
-    ("gpt-5-fast",              "gpt-5"),
-    ("gpt-5.2-low",             "gpt-5"),
+    ("claude-opus-4.7", "claude-opus-4-7"),
+    ("claude-opus-4.6", "claude-opus-4-6"),
+    ("claude-opus-4.5", "claude-opus-4-5"),
+    ("claude-sonnet-4.6", "claude-sonnet-4-6"),
+    ("claude-sonnet-4.5", "claude-sonnet-4-5"),
+    ("claude-haiku-4.5", "claude-haiku-4-5"),
+    ("gpt-5-fast", "gpt-5"),
+    ("gpt-5.2-low", "gpt-5"),
 ];
 
 /// 规范化：去掉 `@xxx` pin、`-YYYYMMDD` 日期、provider 前缀。
@@ -213,35 +345,35 @@ pub fn short_name(model: &str) -> String {
         ("claude-opus-4-6", "Opus 4.6"),
         ("claude-opus-4-5", "Opus 4.5"),
         ("claude-opus-4-1", "Opus 4.1"),
-        ("claude-opus-4",   "Opus 4"),
+        ("claude-opus-4", "Opus 4"),
         ("claude-sonnet-4-6", "Sonnet 4.6"),
         ("claude-sonnet-4-5", "Sonnet 4.5"),
-        ("claude-sonnet-4",   "Sonnet 4"),
+        ("claude-sonnet-4", "Sonnet 4"),
         ("claude-3-7-sonnet", "Sonnet 3.7"),
         ("claude-3-5-sonnet", "Sonnet 3.5"),
-        ("claude-haiku-4-5",  "Haiku 4.5"),
-        ("claude-3-5-haiku",  "Haiku 3.5"),
-        ("gpt-5.3-codex",     "GPT-5.3 Codex"),
-        ("gpt-5.1-codex",     "GPT-5.1 Codex"),
-        ("gpt-5-codex",       "GPT-5 Codex"),
-        ("gpt-5.5",           "GPT-5.5"),
-        ("gpt-5.4",           "GPT-5.4"),
-        ("gpt-5.3",           "GPT-5.3"),
-        ("gpt-5.2",           "GPT-5.2"),
-        ("gpt-5.1",           "GPT-5.1"),
-        ("gpt-5",             "GPT-5"),
-        ("gpt-4o-mini",       "GPT-4o Mini"),
-        ("gpt-4o",            "GPT-4o"),
-        ("gpt-4.1",           "GPT-4.1"),
-        ("o4-mini",           "o4-mini"),
-        ("o3-mini",           "o3-mini"),
-        ("o3",                "o3"),
+        ("claude-haiku-4-5", "Haiku 4.5"),
+        ("claude-3-5-haiku", "Haiku 3.5"),
+        ("gpt-5.3-codex", "GPT-5.3 Codex"),
+        ("gpt-5.1-codex", "GPT-5.1 Codex"),
+        ("gpt-5-codex", "GPT-5 Codex"),
+        ("gpt-5.5", "GPT-5.5"),
+        ("gpt-5.4", "GPT-5.4"),
+        ("gpt-5.3", "GPT-5.3"),
+        ("gpt-5.2", "GPT-5.2"),
+        ("gpt-5.1", "GPT-5.1"),
+        ("gpt-5", "GPT-5"),
+        ("gpt-4o-mini", "GPT-4o Mini"),
+        ("gpt-4o", "GPT-4o"),
+        ("gpt-4.1", "GPT-4.1"),
+        ("o4-mini", "o4-mini"),
+        ("o3-mini", "o3-mini"),
+        ("o3", "o3"),
         ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
         ("gemini-3-flash-preview", "Gemini 3 Flash"),
-        ("gemini-3-pro-preview",   "Gemini 3 Pro"),
-        ("gemini-2.5-pro",         "Gemini 2.5 Pro"),
-        ("gemini-2.5-flash",       "Gemini 2.5 Flash"),
-        ("gemini-2.0-flash",       "Gemini 2.0 Flash"),
+        ("gemini-3-pro-preview", "Gemini 3 Pro"),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        ("gemini-2.0-flash", "Gemini 2.0 Flash"),
     ];
     let mut sorted: Vec<&(&str, &str)> = SHORT.iter().collect();
     sorted.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
@@ -270,9 +402,15 @@ mod tests {
 
     #[test]
     fn canonical_strips_pin_date_and_provider_prefix() {
-        assert_eq!(canonical("anthropic/claude-opus-4-6@20250929"), "claude-opus-4-6");
+        assert_eq!(
+            canonical("anthropic/claude-opus-4-6@20250929"),
+            "claude-opus-4-6"
+        );
         assert_eq!(canonical("claude-sonnet-4-20250514"), "claude-sonnet-4");
-        assert_eq!(canonical("openrouter/anthropic/claude-opus-4-6"), "anthropic/claude-opus-4-6");
+        assert_eq!(
+            canonical("openrouter/anthropic/claude-opus-4-6"),
+            "anthropic/claude-opus-4-6"
+        );
         // 注意：canonical 只剥第一段 provider；本表会再用整名查一次（with_prefix）
     }
 
@@ -296,7 +434,10 @@ mod tests {
         // 表里没 gpt-5-mini，前缀匹配会回 gpt-5；但要确保 gpt-5.3-codex 不会塌到 gpt-5
         let gpt5 = lookup("gpt-5").expect("known");
         let codex = lookup("gpt-5.3-codex").expect("known");
-        assert!(codex.input > gpt5.input, "codex priced higher than base gpt-5");
+        assert!(
+            codex.input > gpt5.input,
+            "codex priced higher than base gpt-5"
+        );
     }
 
     #[test]

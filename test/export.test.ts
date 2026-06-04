@@ -48,6 +48,12 @@ function session(over: Partial<SessionMeta> = {}): SessionMeta {
     modified: 0,
     size: 100,
     messageCount: 5,
+    codexAppListRank: null,
+    codexAppListScanned: 0,
+    codexAppFirstPageSize: 50,
+    codexAppFirstPagePosition: 0,
+    codexInternal: false,
+    codexArchived: false,
     ...over,
   }
 }

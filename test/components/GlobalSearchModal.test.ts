@@ -46,6 +46,12 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
       modified: 0,
       size: 1,
       messageCount: 1,
+      codexAppListRank: null,
+      codexAppListScanned: 0,
+      codexAppFirstPageSize: 50,
+      codexAppFirstPagePosition: 0,
+      codexInternal: false,
+      codexArchived: false,
     },
     ...over,
   }

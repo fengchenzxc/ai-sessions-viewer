@@ -72,49 +72,93 @@ impl TaskCategory {
 
 // ---- 正则（lazy，进程级共享）-----------------------------------------------
 
-static TEST_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
-    r"(?i)\b(test|pytest|vitest|jest|mocha|spec|coverage|npm\s+test|npx\s+vitest|npx\s+jest)\b"
-).unwrap());
-static GIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+static TEST_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(test|pytest|vitest|jest|mocha|spec|coverage|npm\s+test|npx\s+vitest|npx\s+jest)\b",
+    )
+    .unwrap()
+});
+static GIT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\bgit\s+(push|pull|commit|merge|rebase|checkout|branch|stash|log|diff|status|add|reset|cherry-pick|tag)\b"
-).unwrap());
-static BUILD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+).unwrap()
+});
+static BUILD_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(npm\s+run\s+build|npm\s+publish|pip\s+install|docker|deploy|make\s+build|npm\s+run\s+dev|npm\s+start|pm2|systemctl|brew|cargo\s+build)\b"
-).unwrap());
-static INSTALL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
-    r"(?i)\b(npm\s+install|pip\s+install|brew\s+install|apt\s+install|cargo\s+add)\b"
-).unwrap());
+).unwrap()
+});
+static INSTALL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(npm\s+install|pip\s+install|brew\s+install|apt\s+install|cargo\s+add)\b")
+        .unwrap()
+});
 
-static DEBUG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+static DEBUG_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(fix|bug|error|broken|failing|crash|issue|debug|traceback|exception|stack\s*trace|not\s+working|wrong|unexpected|status\s+code|404|500|401|403)\b"
-).unwrap());
-static FEATURE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+).unwrap()
+});
+static FEATURE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(add|create|implement|new|build|feature|introduce|set\s*up|scaffold|generate|make\s+(?:a|me|the)|write\s+(?:a|me|the))\b"
-).unwrap());
-static REFACTOR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+).unwrap()
+});
+static REFACTOR_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(refactor|clean\s*up|rename|reorganize|simplify|extract|restructure|move|migrate|split)\b"
-).unwrap());
-static BRAINSTORM_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+).unwrap()
+});
+static BRAINSTORM_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(brainstorm|idea|what\s+if|explore|think\s+about|approach|strategy|design|consider|how\s+should|what\s+would|opinion|suggest|recommend)\b"
-).unwrap());
-static RESEARCH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+).unwrap()
+});
+static RESEARCH_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(research|investigate|look\s+into|find\s+out|check|search|analyze|review|understand|explain|how\s+does|what\s+is|show\s+me|list|compare)\b"
-).unwrap());
+).unwrap()
+});
 
-static FILE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+static FILE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\.(py|js|ts|tsx|jsx|json|yaml|yml|toml|sql|sh|go|rs|java|rb|php|css|html|md|csv|xml)\b"
-).unwrap());
-static SCRIPT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(
+).unwrap()
+});
+static SCRIPT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
     r"(?i)\b(run\s+\S+\.\w+|execute|scrip?t|curl|api\s+\S+|endpoint|request\s+url|fetch\s+\S+|query|database|db\s+\S+)\b"
-).unwrap());
+).unwrap()
+});
 static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)https?://\S+").unwrap());
 
 // ---- 工具集合（按用途分组）-------------------------------------------------
 
-const EDIT_TOOLS: &[&str] = &["Edit", "Write", "FileEditTool", "FileWriteTool", "NotebookEdit", "cursor:edit"];
-const READ_TOOLS: &[&str] = &["Read", "Grep", "Glob", "FileReadTool", "GrepTool", "GlobTool"];
+const EDIT_TOOLS: &[&str] = &[
+    "Edit",
+    "Write",
+    "FileEditTool",
+    "FileWriteTool",
+    "NotebookEdit",
+    "cursor:edit",
+];
+const READ_TOOLS: &[&str] = &[
+    "Read",
+    "Grep",
+    "Glob",
+    "FileReadTool",
+    "GrepTool",
+    "GlobTool",
+];
 const BASH_TOOLS: &[&str] = &["Bash", "BashTool", "PowerShellTool"];
-const TASK_TOOLS: &[&str] = &["TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TodoWrite"];
+const TASK_TOOLS: &[&str] = &[
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TodoWrite",
+];
 const SEARCH_TOOLS: &[&str] = &["WebSearch", "WebFetch", "ToolSearch"];
 
 fn has_any(tools: &[String], set: &[&str]) -> bool {

@@ -13,6 +13,8 @@ node_modules
 dist
 dist-ssr
 coverage
+src-tauri/target
+.tmp*
 *.local
 
 # Local assistant / desktop-agent configuration

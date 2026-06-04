@@ -113,14 +113,14 @@ impl Aggregator {
 
                 // 模型
                 if !call.model.is_empty() {
-                    let entry = self
-                        .models
-                        .entry(call.model.clone())
-                        .or_insert_with(|| ModelStat {
-                            model: call.model.clone(),
-                            label: pricing::short_name(&call.model),
-                            ..Default::default()
-                        });
+                    let entry =
+                        self.models
+                            .entry(call.model.clone())
+                            .or_insert_with(|| ModelStat {
+                                model: call.model.clone(),
+                                label: pricing::short_name(&call.model),
+                                ..Default::default()
+                            });
                     entry.call_count += 1;
                     entry.usage.add_assign(&call.usage);
                     entry.cost_usd += call.cost_usd;
@@ -142,13 +142,10 @@ impl Aggregator {
             // 否则空 turn 会膨胀 turn_count 但又没有任何 call 入账。
             if turn_calls_kept > 0 {
                 let cat = classifier::classify(turn).key();
-                let act = self
-                    .activities
-                    .entry(cat)
-                    .or_insert_with(|| ActivityStat {
-                        key: cat.to_string(),
-                        ..Default::default()
-                    });
+                let act = self.activities.entry(cat).or_insert_with(|| ActivityStat {
+                    key: cat.to_string(),
+                    ..Default::default()
+                });
                 act.turn_count += 1;
                 act.call_count += turn_calls_kept;
                 act.cost_usd += turn_cost;
@@ -233,7 +230,11 @@ impl Aggregator {
     pub fn snapshot(&self, scope: &str) -> AgentStats {
         // 项目按 cost 降序
         let mut projects: Vec<ProjectStats> = self.projects.values().cloned().collect();
-        projects.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        projects.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         // tie-break 用 total tokens（cost 全 0 时退化为 token 排序）
         if projects.iter().all(|p| p.cost_usd == 0.0) {
             projects.sort_by_key(|p| std::cmp::Reverse(p.usage.total));
@@ -246,7 +247,9 @@ impl Aggregator {
         // Top Sessions：按 cost 降序，截前 10
         let mut top_sessions: Vec<SessionStat> = self.sessions.clone();
         top_sessions.sort_by(|a, b| {
-            b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal)
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         if top_sessions.iter().all(|s| s.cost_usd == 0.0) {
             top_sessions.sort_by_key(|s| std::cmp::Reverse(s.usage.total));
@@ -265,7 +268,9 @@ impl Aggregator {
             })
             .collect();
         by_model.sort_by(|a, b| {
-            b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal)
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         if by_model.iter().all(|m| m.cost_usd == 0.0) {
             by_model.sort_by_key(|m| std::cmp::Reverse(m.call_count));
@@ -400,8 +405,18 @@ mod tests {
         }
         .finalize();
         let mut agg = Aggregator::new();
-        let big_turns = vec![turn_with_one_call("x", "claude-opus-4-7", vec![], big_usage)];
-        let small_turns = vec![turn_with_one_call("y", "claude-haiku-4-5", vec![], small_usage)];
+        let big_turns = vec![turn_with_one_call(
+            "x",
+            "claude-opus-4-7",
+            vec![],
+            big_usage,
+        )];
+        let small_turns = vec![turn_with_one_call(
+            "y",
+            "claude-haiku-4-5",
+            vec![],
+            small_usage,
+        )];
         agg.feed_session(&SessionFeed {
             agent: "claude",
             project_dir_name: "big",
@@ -481,10 +496,27 @@ mod tests {
         // session mtime = day 3，旧实现会把 3 个 turn 全堆到 2024-01-03
         agg.feed_session(&feed(&turns, 1_704_283_200_000));
         let s = agg.snapshot("all");
-        assert_eq!(s.daily_activity.len(), 3, "expected 3 distinct days, got {:?}", s.daily_activity.iter().map(|d| &d.date).collect::<Vec<_>>());
-        let d1 = s.daily_activity.iter().find(|d| d.date == "2024-01-01").expect("day1");
-        let d2 = s.daily_activity.iter().find(|d| d.date == "2024-01-02").expect("day2");
-        let d3 = s.daily_activity.iter().find(|d| d.date == "2024-01-03").expect("day3");
+        assert_eq!(
+            s.daily_activity.len(),
+            3,
+            "expected 3 distinct days, got {:?}",
+            s.daily_activity.iter().map(|d| &d.date).collect::<Vec<_>>()
+        );
+        let d1 = s
+            .daily_activity
+            .iter()
+            .find(|d| d.date == "2024-01-01")
+            .expect("day1");
+        let d2 = s
+            .daily_activity
+            .iter()
+            .find(|d| d.date == "2024-01-02")
+            .expect("day2");
+        let d3 = s
+            .daily_activity
+            .iter()
+            .find(|d| d.date == "2024-01-03")
+            .expect("day3");
         assert_eq!(d1.call_count, 1);
         assert_eq!(d2.call_count, 1);
         assert_eq!(d3.call_count, 1);
@@ -541,10 +573,18 @@ mod tests {
         let turns_a = vec![turn_with_call_id("hi", "claude-sonnet-4-6", "msg_x", usage)];
         agg.feed_session(&feed(&turns_a, 1));
         // 第二个 session 的所有 call 都是 msg_x —— 整个 session 应被丢弃
-        let turns_b = vec![turn_with_call_id("hi again", "claude-sonnet-4-6", "msg_x", usage)];
+        let turns_b = vec![turn_with_call_id(
+            "hi again",
+            "claude-sonnet-4-6",
+            "msg_x",
+            usage,
+        )];
         agg.feed_session(&feed(&turns_b, 2));
         let s = agg.snapshot("all");
-        assert_eq!(s.session_count, 1, "duplicate-only session should not count");
+        assert_eq!(
+            s.session_count, 1,
+            "duplicate-only session should not count"
+        );
         assert_eq!(s.call_count, 1);
         assert_eq!(s.projects.len(), 1);
         assert_eq!(s.projects[0].session_count, 1);
@@ -585,7 +625,11 @@ mod tests {
         // Bash 出现 3 次，Edit / Read 各 1 次
         let bash = s.by_tool.iter().find(|n| n.name == "Bash").unwrap();
         assert_eq!(bash.count, 3);
-        assert!(s.by_tool[0].name == "Bash", "Bash should be top: {:?}", s.by_tool);
+        assert!(
+            s.by_tool[0].name == "Bash",
+            "Bash should be top: {:?}",
+            s.by_tool
+        );
     }
 
     #[test]
@@ -595,7 +639,12 @@ mod tests {
         let turns = vec![
             turn_with_one_call("add feature x", "claude-sonnet-4-6", vec!["Edit"], usage),
             turn_with_one_call("refactor login", "claude-sonnet-4-6", vec!["Edit"], usage),
-            turn_with_one_call("git push the changes", "claude-sonnet-4-6", vec!["Bash"], usage),
+            turn_with_one_call(
+                "git push the changes",
+                "claude-sonnet-4-6",
+                vec!["Bash"],
+                usage,
+            ),
         ];
         agg.feed_session(&feed(&turns, 0));
         let s = agg.snapshot("all");
@@ -615,12 +664,7 @@ mod tests {
                 ..Default::default()
             }
             .finalize();
-            let turns = vec![turn_with_one_call(
-                "x",
-                "claude-sonnet-4-6",
-                vec![],
-                usage,
-            )];
+            let turns = vec![turn_with_one_call("x", "claude-sonnet-4-6", vec![], usage)];
             agg.feed_session(&SessionFeed {
                 agent: "claude",
                 project_dir_name: "p",

@@ -243,6 +243,21 @@ function idSegs(id: string) {
   return highlightSegments(shortId(id), sessionSearch.value)
 }
 
+function codexRankLabel(s: SessionMeta): string {
+  if (props.agent !== 'codex' || !s.codexAppListScanned) return ''
+  const firstPageSize = s.codexAppFirstPageSize || 50
+  const position = s.codexAppFirstPagePosition || 0
+  const rank = s.codexAppListRank || '-'
+  return `首屏 ${position}/${firstPageSize} · rank ${rank}`
+}
+
+function codexSpecialLabel(s: SessionMeta): string {
+  if (props.agent !== 'codex') return ''
+  if (s.codexArchived) return t('list.codex.archived')
+  if (s.codexInternal) return t('list.codex.internal')
+  return ''
+}
+
 // 批量模式下点整张卡片即勾选；否则按以往打开会话。
 function onCardClick(s: SessionMeta) {
   if (sessionSelectMode.value) toggleSessionSelected(s.path)
@@ -468,6 +483,10 @@ defineExpose({ scrollEl })
               <IconCopy />
             </button>
           </span>
+          <span v-if="codexSpecialLabel(s)" class="codex-special-tag">
+            {{ codexSpecialLabel(s) }}
+          </span>
+          <span v-else-if="codexRankLabel(s)">{{ codexRankLabel(s) }}</span>
         </div>
       </div>
       <div v-if="!sessionSelectMode" class="session-actions">

@@ -4,7 +4,16 @@ import type { Agent, ProjectInfo, SessionMeta, TrashItem, Msg } from './types'
 import * as api from './api'
 import { shortName } from './format'
 import { t } from './i18n'
-import { clearAppCache, lang, setLang, setTheme, theme } from './settings'
+import {
+  clearAppCache,
+  codexShowArchivedSessions,
+  codexShowInternalSessions,
+  lang,
+  setLang,
+  terminalApp,
+  setTheme,
+  theme,
+} from './settings'
 import { focusSearchBox, navigate as chatNavigate, resetChatToolbar } from './chatToolbar'
 import { emitMenuSync, installMenuRouter } from './menu'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -57,6 +66,15 @@ function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
 }
 
+const codexSessionOptions = computed(() => ({
+  includeCodexInternal: codexShowInternalSessions.value,
+  includeCodexArchived: codexShowArchivedSessions.value,
+}))
+
+function sessionListOptions() {
+  return agent.value === 'codex' ? codexSessionOptions.value : undefined
+}
+
 /** 顶栏刷新：重新拉取项目 + 当前列表 + 当前打开的对话，全部静默，不动选中与滚动。 */
 async function refreshAll() {
   if (refreshing.value) return
@@ -65,7 +83,7 @@ async function refreshAll() {
 
   // 1. 项目列表（保留 activeDir）
   tasks.push(
-    api.listProjects(agent.value).then((p) => {
+    api.listProjects(agent.value, sessionListOptions()).then((p) => {
       projects.value = p
     }).catch(() => {}),
   )
@@ -83,7 +101,7 @@ async function refreshAll() {
     const n = Math.max(sessions.value.length, PAGE_SIZE)
     tasks.push(
       api
-        .listSessions(agent.value, activeDir.value, 0, n)
+        .listSessions(agent.value, activeDir.value, 0, n, sessionListOptions())
         .then((page) => {
           sessions.value = page.sessions
           sessionTotal.value = page.total
@@ -284,7 +302,13 @@ function deleteProject(p: ProjectInfo) {
         const all: SessionMeta[] = []
         let offset = 0
         while (true) {
-          const page = await api.listSessions(agent.value, p.dirName, offset, 200)
+          const page = await api.listSessions(
+            agent.value,
+            p.dirName,
+            offset,
+            200,
+            sessionListOptions(),
+          )
           all.push(...page.sessions)
           offset += page.sessions.length
           if (all.length >= page.total || page.sessions.length === 0) break
@@ -418,7 +442,7 @@ function notify(msg: string, error = false) {
 // ---------- 数据加载 ----------
 async function loadProjects() {
   try {
-    projects.value = await api.listProjects(agent.value)
+    projects.value = await api.listProjects(agent.value, sessionListOptions())
   } catch (e) {
     notify(t('toast.loadProjectsFail', { e: String(e) }), true)
     projects.value = []
@@ -463,7 +487,7 @@ async function selectProject(dir: string) {
   resetSessionsToolbar()
   loadingList.value = true
   try {
-    const page = await api.listSessions(agent.value, dir, 0, PAGE_SIZE)
+    const page = await api.listSessions(agent.value, dir, 0, PAGE_SIZE, sessionListOptions())
     sessions.value = page.sessions
     sessionTotal.value = page.total
   } catch (e) {
@@ -484,6 +508,7 @@ async function loadMore() {
       activeDir.value,
       sessions.value.length,
       PAGE_SIZE,
+      sessionListOptions(),
     )
     sessions.value.push(...page.sessions)
     sessionTotal.value = page.total
@@ -510,6 +535,7 @@ async function loadAllSessions() {
       activeDir.value,
       0,
       sessionTotal.value,
+      sessionListOptions(),
     )
     sessions.value = page.sessions
     sessionTotal.value = page.total
@@ -534,6 +560,7 @@ async function refreshSessions() {
       activeDir.value,
       0,
       Math.max(PAGE_SIZE, sessions.value.length),
+      sessionListOptions(),
     )
     sessions.value = page.sessions
     sessionTotal.value = page.total
@@ -668,6 +695,12 @@ async function openTrashSession(item: TrashItem) {
     modified: item.deletedAt,
     size: item.size,
     messageCount: 0,
+    codexAppListRank: null,
+    codexAppListScanned: 0,
+    codexAppFirstPageSize: 50,
+    codexAppFirstPagePosition: 0,
+    codexInternal: false,
+    codexArchived: false,
   }
   chatMsgs.value = []
   try {
@@ -967,7 +1000,7 @@ async function resume(s: SessionMeta) {
     // Gemini 必须在对应的项目根目录下 resume 才能找对索引/ID。
     // 优先用 s.cwd（从 .project_root 反查出的绝对路径）。
     const cwd = s.cwd || activeProject.value?.displayPath || ''
-    await api.resumeSession(agent.value, s.id, cwd, s.path)
+    await api.resumeSession(agent.value, s.id, cwd, s.path, terminalApp.value)
     notify(t('toast.resumed'))
   } catch (e) {
     notify(`${e}`, true)
@@ -978,7 +1011,7 @@ async function resume(s: SessionMeta) {
 async function newSession() {
   if (!activeProject.value) return
   try {
-    await api.newSession(agent.value, activeProject.value.displayPath)
+    await api.newSession(agent.value, activeProject.value.displayPath, terminalApp.value)
     notify(t('toast.newSession'))
   } catch (e) {
     notify(`${e}`, true)
@@ -1101,6 +1134,14 @@ onMounted(() => {
 // 主题 / 语言变化 → 同步菜单勾选态。
 watch(theme, (v) => emitMenuSync('theme', v))
 watch(lang, (v) => emitMenuSync('lang', v))
+
+watch([codexShowInternalSessions, codexShowArchivedSessions], () => {
+  if (agent.value !== 'codex') return
+  loadProjects()
+  if (activeDir.value && !showTrash.value && !showStats.value) {
+    refreshSessions()
+  }
+})
 
 let menuUnlisten: UnlistenFn | null = null
 

@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::SessionSource;
-use crate::stats::{pricing, shell as shell_util, types::{CallRecord, Turn}};
+use crate::stats::{
+    pricing, shell as shell_util,
+    types::{CallRecord, Turn},
+};
 use crate::types::{
     Block, DiffHunk, DiffLine, Msg, ProjectInfo, SessionMeta, SessionPage, UsageSummary,
 };
@@ -31,7 +34,11 @@ impl SessionSource for ClaudeSource {
         "claude"
     }
 
-    fn list_projects(&self) -> Result<Vec<ProjectInfo>, String> {
+    fn list_projects(
+        &self,
+        _include_codex_internal: bool,
+        _include_codex_archived: bool,
+    ) -> Result<Vec<ProjectInfo>, String> {
         let dir = projects_dir();
         let mut out = Vec::new();
         let entries = fs::read_dir(&dir).map_err(|e| format!("读取项目目录失败: {e}"))?;
@@ -81,6 +88,8 @@ impl SessionSource for ClaudeSource {
         project_key: &str,
         offset: usize,
         limit: usize,
+        _include_codex_internal: bool,
+        _include_codex_archived: bool,
     ) -> Result<SessionPage, String> {
         let pdir = projects_dir().join(project_key);
         let mut files: Vec<(PathBuf, u64)> = Vec::new();
@@ -334,10 +343,7 @@ fn image_src(el: &Value) -> Option<String> {
 /// 一条 user 记录可能携带多张图（content 数组里多个 text block），只要全是这类
 /// 元引用就整体跳过。
 fn is_image_source_meta(v: &Value, blocks: &[Block]) -> bool {
-    let is_meta = v
-        .get("isMeta")
-        .and_then(|x| x.as_bool())
-        .unwrap_or(false);
+    let is_meta = v.get("isMeta").and_then(|x| x.as_bool()).unwrap_or(false);
     if !is_meta {
         return false;
     }
@@ -558,6 +564,12 @@ fn scan(fp: &Path) -> SessionMeta {
         modified,
         size,
         message_count,
+        codex_app_list_rank: None,
+        codex_app_list_scanned: 0,
+        codex_app_first_page_size: 50,
+        codex_app_first_page_position: 0,
+        codex_internal: false,
+        codex_archived: false,
     }
 }
 
@@ -579,7 +591,10 @@ fn read(path: &str) -> Result<Vec<Msg>, String> {
         if t == "attachment" {
             if let Some(blocks) = queued_command_blocks(&v) {
                 msgs.push(Msg {
-                    uuid: v.get("uuid").and_then(|x| x.as_str()).map(|s| s.to_string()),
+                    uuid: v
+                        .get("uuid")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
                     role: "user".to_string(),
                     timestamp: v
                         .get("timestamp")
@@ -649,10 +664,8 @@ fn read(path: &str) -> Result<Vec<Msg>, String> {
                                 let input = el
                                     .get("input")
                                     .map(|i| serde_json::to_string_pretty(i).unwrap_or_default());
-                                let id = el
-                                    .get("id")
-                                    .and_then(|x| x.as_str())
-                                    .map(|s| s.to_string());
+                                let id =
+                                    el.get("id").and_then(|x| x.as_str()).map(|s| s.to_string());
                                 blocks.push(Block {
                                     kind: "tool_use".to_string(),
                                     tool_name: Some(name),
@@ -835,7 +848,11 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                 if el.get("type").and_then(|x| x.as_str()) != Some("tool_use") {
                     continue;
                 }
-                let name = el.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let name = el
+                    .get("name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if name.is_empty() {
                     continue;
                 }
@@ -860,7 +877,11 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                 tools.push(name);
             }
         }
-        let cost = if usage.total == 0 { 0.0 } else { pricing::cost_usd(&model, &usage) };
+        let cost = if usage.total == 0 {
+            0.0
+        } else {
+            pricing::cost_usd(&model, &usage)
+        };
         let call = CallRecord {
             model,
             message_id,
@@ -973,11 +994,14 @@ mod tests {
 
     #[test]
     fn usage_sums_input_output_cache_across_assistant_messages() {
-        let p = write_temp("sum.jsonl", &[
-            r#"{"type":"user","message":{"content":"hi"}}"#,
-            r#"{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":0}}}"#,
-            r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"output_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":100}}}"#,
-        ]);
+        let p = write_temp(
+            "sum.jsonl",
+            &[
+                r#"{"type":"user","message":{"content":"hi"}}"#,
+                r#"{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":0}}}"#,
+                r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"output_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":100}}}"#,
+            ],
+        );
         let u = usage_summary(&p).unwrap();
         assert_eq!(u.input_tokens, 13);
         assert_eq!(u.output_tokens, 12);
@@ -989,19 +1013,25 @@ mod tests {
 
     #[test]
     fn usage_ignores_lines_without_usage() {
-        let p = write_temp("no-usage.jsonl", &[
-            r#"{"type":"user","message":{"content":"hi"}}"#,
-            r#"{"type":"system","content":"x"}"#,
-        ]);
+        let p = write_temp(
+            "no-usage.jsonl",
+            &[
+                r#"{"type":"user","message":{"content":"hi"}}"#,
+                r#"{"type":"system","content":"x"}"#,
+            ],
+        );
         assert_eq!(usage_summary(&p).unwrap(), UsageSummary::default());
     }
 
     #[test]
     fn usage_handles_missing_subfields_as_zero() {
-        let p = write_temp("partial.jsonl", &[
-            // 只有 output_tokens，其他字段缺失 —— 不应该挂
-            r#"{"type":"assistant","message":{"usage":{"output_tokens":42}}}"#,
-        ]);
+        let p = write_temp(
+            "partial.jsonl",
+            &[
+                // 只有 output_tokens，其他字段缺失 —— 不应该挂
+                r#"{"type":"assistant","message":{"usage":{"output_tokens":42}}}"#,
+            ],
+        );
         let u = usage_summary(&p).unwrap();
         assert_eq!(u.output_tokens, 42);
         assert_eq!(u.total, 42);
@@ -1017,7 +1047,7 @@ mod tests {
     #[ignore = "manual full-scan; reads every Claude JSONL on disk"]
     fn dedup_full_claude_scan() {
         let src = ClaudeSource;
-        let projects = src.list_projects().unwrap();
+        let projects = src.list_projects(false, false).unwrap();
         let mut agg = crate::stats::aggregate::Aggregator::new();
         for p in &projects {
             let sessions = src.discover_stats_sessions(&p.dir_name).unwrap_or_default();
@@ -1041,13 +1071,33 @@ mod tests {
         eprintln!("sessions: {}", snap.session_count);
         eprintln!("calls: {}", snap.call_count);
         eprintln!("cost: ${:.2}", snap.cost_usd);
-        eprintln!("input: {} ({:.1}M)", snap.usage.input_tokens, snap.usage.input_tokens as f64 / 1e6);
-        eprintln!("output: {} ({:.1}M)", snap.usage.output_tokens, snap.usage.output_tokens as f64 / 1e6);
-        eprintln!("cache_read: {} ({:.1}M)", snap.usage.cache_read_input_tokens, snap.usage.cache_read_input_tokens as f64 / 1e6);
-        eprintln!("cache_write: {} ({:.1}M)", snap.usage.cache_creation_input_tokens, snap.usage.cache_creation_input_tokens as f64 / 1e6);
+        eprintln!(
+            "input: {} ({:.1}M)",
+            snap.usage.input_tokens,
+            snap.usage.input_tokens as f64 / 1e6
+        );
+        eprintln!(
+            "output: {} ({:.1}M)",
+            snap.usage.output_tokens,
+            snap.usage.output_tokens as f64 / 1e6
+        );
+        eprintln!(
+            "cache_read: {} ({:.1}M)",
+            snap.usage.cache_read_input_tokens,
+            snap.usage.cache_read_input_tokens as f64 / 1e6
+        );
+        eprintln!(
+            "cache_write: {} ({:.1}M)",
+            snap.usage.cache_creation_input_tokens,
+            snap.usage.cache_creation_input_tokens as f64 / 1e6
+        );
         eprintln!("\ndaily activity (top 15 by cost):");
         let mut daily = snap.daily_activity.clone();
-        daily.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        daily.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for d in daily.iter().take(15) {
             eprintln!("  {}  ${:>7.2}  calls={}", d.date, d.cost_usd, d.call_count);
         }
@@ -1056,7 +1106,9 @@ mod tests {
     #[test]
     #[ignore = "manual; set CLAUDE_DEDUP_FIXTURE=<path>.jsonl to run"]
     fn dedup_verify_real_file() {
-        let Ok(path) = std::env::var("CLAUDE_DEDUP_FIXTURE") else { return };
+        let Ok(path) = std::env::var("CLAUDE_DEDUP_FIXTURE") else {
+            return;
+        };
         let turns = read_turns(std::path::Path::new(&path));
         let total: usize = turns.iter().map(|t| t.calls.len()).sum();
         let uniq: std::collections::HashSet<&String> = turns
@@ -1065,7 +1117,12 @@ mod tests {
             .filter_map(|c| c.message_id.as_ref())
             .collect();
         eprintln!("\nfile: {path}");
-        eprintln!("  turns: {} calls(pre-dedup): {} unique msg-ids: {}", turns.len(), total, uniq.len());
+        eprintln!(
+            "  turns: {} calls(pre-dedup): {} unique msg-ids: {}",
+            turns.len(),
+            total,
+            uniq.len()
+        );
         let mut agg = crate::stats::aggregate::Aggregator::new();
         agg.feed_session(&crate::stats::aggregate::SessionFeed {
             agent: "claude",
@@ -1079,8 +1136,13 @@ mod tests {
             turns: &turns,
         });
         let s = agg.snapshot("test");
-        eprintln!("aggregator: call_count={} cost=${:.2} input={} output={} cache_read={}",
-            s.call_count, s.cost_usd,
-            s.usage.input_tokens, s.usage.output_tokens, s.usage.cache_read_input_tokens);
+        eprintln!(
+            "aggregator: call_count={} cost=${:.2} input={} output={} cache_read={}",
+            s.call_count,
+            s.cost_usd,
+            s.usage.input_tokens,
+            s.usage.output_tokens,
+            s.usage.cache_read_input_tokens
+        );
     }
 }

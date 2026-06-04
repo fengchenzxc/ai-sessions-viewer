@@ -83,11 +83,20 @@ const session = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   modified: 0,
   size: 1024,
   messageCount: 3,
+  codexAppListRank: null,
+  codexAppListScanned: 0,
+  codexAppFirstPageSize: 50,
+  codexAppFirstPagePosition: 0,
+  codexInternal: false,
+  codexArchived: false,
   ...over,
 })
 
 type Props = InstanceType<typeof SessionsView>['$props']
-const factory = (sessions: SessionMeta[] = [session()]) =>
+const factory = (
+  sessions: SessionMeta[] = [session()],
+  overrides: Partial<Props> = {},
+) =>
   mount(SessionsView, {
     props: {
       agent: 'claude',
@@ -96,6 +105,7 @@ const factory = (sessions: SessionMeta[] = [session()]) =>
       sessionTotal: sessions.length,
       loading: false,
       loadingMore: false,
+      ...overrides,
     } as Props,
     global: { directives: { tooltip: vTooltip } },
   })
@@ -105,6 +115,105 @@ describe('SessionsView', () => {
     const wrapper = factory()
     await wrapper.find('.session-card').trigger('click')
     expect(wrapper.emitted('open')).toHaveLength(1)
+  })
+
+  it('shows Codex app-server first-screen position and rank in the metadata row', () => {
+    setLang('zh')
+    const wrapper = factory(
+      [
+        session({
+          codexAppListRank: 64,
+          codexAppListScanned: 1000,
+          codexAppFirstPageSize: 50,
+          codexAppFirstPagePosition: 0,
+        } as Partial<SessionMeta>),
+      ],
+      { agent: 'codex' },
+    )
+    expect(wrapper.find('.session-meta').text()).toContain('首屏 0/50 · rank 64')
+  })
+
+  it('does not show Codex app-server rank metadata for non-Codex agents', () => {
+    setLang('zh')
+    const wrapper = factory([
+      session({
+        codexAppListRank: 64,
+        codexAppListScanned: 1000,
+        codexAppFirstPageSize: 50,
+        codexAppFirstPagePosition: 0,
+      } as Partial<SessionMeta>),
+    ])
+    expect(wrapper.find('.session-meta').text()).not.toContain('首屏 0/50')
+    expect(wrapper.find('.session-meta').text()).not.toContain('rank 64')
+  })
+
+  it('shows rank placeholder for Codex sessions absent from the scanned app-server window', () => {
+    setLang('zh')
+    const wrapper = factory(
+      [
+        session({
+          codexAppListRank: null,
+          codexAppListScanned: 1000,
+          codexAppFirstPageSize: 50,
+          codexAppFirstPagePosition: 0,
+        }),
+      ],
+      { agent: 'codex' },
+    )
+    expect(wrapper.find('.session-meta').text()).toContain('首屏 0/50 · rank -')
+  })
+
+  it('marks Codex internal guardian sessions instead of showing app rank', () => {
+    setLang('zh')
+    const wrapper = factory(
+      [
+        session({
+          codexInternal: true,
+          codexAppListRank: 1,
+          codexAppListScanned: 50,
+          codexAppFirstPagePosition: 1,
+        }),
+      ],
+      { agent: 'codex' },
+    )
+    const tag = wrapper.find('.codex-special-tag')
+    expect(tag.text()).toBe('审核会话')
+    expect(wrapper.find('.session-meta').text()).not.toContain('首屏 1/50')
+  })
+
+  it('marks Codex archived sessions instead of showing app rank', () => {
+    setLang('zh')
+    const wrapper = factory(
+      [
+        session({
+          codexArchived: true,
+          codexAppListRank: 1,
+          codexAppListScanned: 50,
+          codexAppFirstPagePosition: 1,
+        }),
+      ],
+      { agent: 'codex' },
+    )
+    const tag = wrapper.find('.codex-special-tag')
+    expect(tag.text()).toBe('已归档会话')
+    expect(wrapper.find('.session-meta').text()).not.toContain('首屏 1/50')
+  })
+
+  it('shows archived label before internal label when a Codex session has both flags', () => {
+    setLang('zh')
+    const wrapper = factory(
+      [
+        session({
+          codexInternal: true,
+          codexArchived: true,
+          codexAppListRank: 1,
+          codexAppListScanned: 50,
+          codexAppFirstPagePosition: 1,
+        }),
+      ],
+      { agent: 'codex' },
+    )
+    expect(wrapper.find('.codex-special-tag').text()).toBe('已归档会话')
   })
 
   it('opens the export menu without navigating into the session', async () => {

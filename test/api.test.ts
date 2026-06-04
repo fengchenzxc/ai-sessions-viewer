@@ -15,7 +15,23 @@ beforeEach(() => {
 describe('api wrappers', () => {
   it('listProjects → list_projects', () => {
     api.listProjects('claude')
-    expect(invoke).toHaveBeenCalledWith('list_projects', { agent: 'claude' })
+    expect(invoke).toHaveBeenCalledWith('list_projects', {
+      agent: 'claude',
+      includeCodexInternal: false,
+      includeCodexArchived: false,
+    })
+  })
+
+  it('listProjects forwards Codex visibility options', () => {
+    api.listProjects('codex', {
+      includeCodexInternal: true,
+      includeCodexArchived: true,
+    })
+    expect(invoke).toHaveBeenCalledWith('list_projects', {
+      agent: 'codex',
+      includeCodexInternal: true,
+      includeCodexArchived: true,
+    })
   })
 
   it('listSessions → list_sessions with pagination', () => {
@@ -25,6 +41,23 @@ describe('api wrappers', () => {
       projectKey: 'proj-key',
       offset: 10,
       limit: 20,
+      includeCodexInternal: false,
+      includeCodexArchived: false,
+    })
+  })
+
+  it('listSessions forwards Codex visibility options independently', () => {
+    api.listSessions('codex', 'proj-key', 0, 50, {
+      includeCodexInternal: true,
+      includeCodexArchived: true,
+    })
+    expect(invoke).toHaveBeenCalledWith('list_sessions', {
+      agent: 'codex',
+      projectKey: 'proj-key',
+      offset: 0,
+      limit: 50,
+      includeCodexInternal: true,
+      includeCodexArchived: true,
     })
   })
 
@@ -125,12 +158,22 @@ describe('api wrappers', () => {
   })
 
   it('resumeSession → resume_session', () => {
-    api.resumeSession('claude', 'abc-123', '/work/dir', '/p/s.jsonl')
+    api.resumeSession('claude', 'abc-123', '/work/dir', '/p/s.jsonl', 'warp')
     expect(invoke).toHaveBeenCalledWith('resume_session', {
       agent: 'claude',
       sessionId: 'abc-123',
       cwd: '/work/dir',
       path: '/p/s.jsonl',
+      terminal: 'warp',
+    })
+  })
+
+  it('newSession → new_session', () => {
+    api.newSession('codex', '/work/dir', 'iterm2')
+    expect(invoke).toHaveBeenCalledWith('new_session', {
+      agent: 'codex',
+      cwd: '/work/dir',
+      terminal: 'iterm2',
     })
   })
 

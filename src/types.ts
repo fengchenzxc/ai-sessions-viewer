@@ -1,4 +1,5 @@
 export type Agent = 'claude' | 'codex' | 'gemini'
+export type TerminalApp = 'warp' | 'terminal' | 'iterm2'
 
 export interface ProjectInfo {
   dirName: string
@@ -19,6 +20,12 @@ export interface SessionMeta {
   modified: number
   size: number
   messageCount: number
+  codexAppListRank?: number | null
+  codexAppListScanned: number
+  codexAppFirstPageSize: number
+  codexAppFirstPagePosition: number
+  codexInternal: boolean
+  codexArchived: boolean
 }
 
 export interface SessionPage {
