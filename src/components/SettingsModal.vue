@@ -1,19 +1,33 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { t } from '../i18n'
-import { lang, theme, setLang, setTheme, type Lang, type Theme } from '../settings'
+import {
+  codexShowArchivedSessions,
+  codexShowInternalSessions,
+  lang,
+  setTerminalApp,
+  setCodexShowArchivedSessions,
+  setCodexShowInternalSessions,
+  setLang,
+  setTheme,
+  terminalApp,
+  theme,
+  type Lang,
+  type TerminalApp,
+  type Theme,
+} from '../settings'
 import { formatSize } from '../format'
 import {
   IconClose,
-  IconSun,
-  IconMoon,
-  IconMonitor,
+  IconTerminal,
   IconLanguages,
   IconPalette,
   IconDatabase,
   IconInfo,
   IconRefresh,
   IconExternalLink,
+  IconArchive,
+  IconShieldCheck,
 } from './icons'
 import * as api from '../api'
 import {
@@ -56,11 +70,20 @@ const langOptions: { v: Lang; key: string }[] = [
   { v: 'zh-TW', key: 'settings.lang.zhTw' },
   { v: 'ja', key: 'settings.lang.ja' },
 ]
-type ThemeOpt = { v: Theme; key: string; icon: typeof IconSun }
+type ThemeOpt = { v: Theme; key: string }
 const themeOptions: ThemeOpt[] = [
-  { v: 'light', key: 'settings.theme.light', icon: IconSun },
-  { v: 'dark', key: 'settings.theme.dark', icon: IconMoon },
-  { v: 'system', key: 'settings.theme.system', icon: IconMonitor },
+  { v: 'light', key: 'settings.theme.light' },
+  { v: 'dark', key: 'settings.theme.dark' },
+  { v: 'system', key: 'settings.theme.system' },
+  { v: 'codex', key: 'settings.theme.codex' },
+  { v: 'dracula', key: 'settings.theme.dracula' },
+]
+
+type TerminalOpt = { v: TerminalApp; key: string }
+const terminalOptions: TerminalOpt[] = [
+  { v: 'warp', key: 'settings.terminal.warp' },
+  { v: 'terminal', key: 'settings.terminal.terminal' },
+  { v: 'iterm2', key: 'settings.terminal.iterm2' },
 ]
 
 async function doCheck() {
@@ -122,16 +145,63 @@ async function doCheck() {
             <IconPalette />
             <span class="set-section-title">{{ t('settings.section.theme') }}</span>
           </header>
+          <div class="theme-select-wrap">
+            <span class="theme-swatch" :class="`theme-swatch-${theme}`">Aa</span>
+            <select
+              class="theme-select"
+              :value="theme"
+              @change="setTheme(($event.target as HTMLSelectElement).value as Theme)"
+            >
+              <option v-for="o in themeOptions" :key="o.v" :value="o.v">
+                {{ t(o.key) }}
+              </option>
+            </select>
+          </div>
+        </section>
+
+        <!-- 终端 -->
+        <section class="set-section">
+          <header class="set-section-head">
+            <IconTerminal />
+            <span class="set-section-title">{{ t('settings.section.terminal') }}</span>
+          </header>
           <div class="theme-grid">
             <button
-              v-for="o in themeOptions"
+              v-for="o in terminalOptions"
               :key="o.v"
-              class="theme-card"
-              :class="{ active: theme === o.v }"
-              @click="setTheme(o.v)"
+              class="terminal-card"
+              :class="{ active: terminalApp === o.v }"
+              @click="setTerminalApp(o.v)"
             >
-              <component :is="o.icon" class="theme-card-ic" />
+              <IconTerminal class="theme-card-ic" />
               <span class="theme-card-label">{{ t(o.key) }}</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Codex -->
+        <section class="set-section">
+          <header class="set-section-head">
+            <IconShieldCheck />
+            <span class="set-section-title">{{ t('settings.section.codex') }}</span>
+          </header>
+          <p class="set-section-desc">{{ t('settings.codexVisibilityDesc') }}</p>
+          <div class="codex-toggle-grid">
+            <button
+              class="codex-toggle-card"
+              :class="{ active: codexShowInternalSessions }"
+              @click="setCodexShowInternalSessions(!codexShowInternalSessions)"
+            >
+              <IconShieldCheck class="theme-card-ic" />
+              <span class="theme-card-label">{{ t('settings.codex.showInternal') }}</span>
+            </button>
+            <button
+              class="codex-toggle-card"
+              :class="{ active: codexShowArchivedSessions }"
+              @click="setCodexShowArchivedSessions(!codexShowArchivedSessions)"
+            >
+              <IconArchive class="theme-card-ic" />
+              <span class="theme-card-label">{{ t('settings.codex.showArchived') }}</span>
             </button>
           </div>
         </section>

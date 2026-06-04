@@ -231,6 +231,8 @@ export default {
   'settings.title': 'Settings',
   'settings.section.lang': 'Language',
   'settings.section.theme': 'Appearance',
+  'settings.section.terminal': 'Terminal',
+  'settings.section.codex': 'Codex',
   'settings.section.data': 'Data',
   'settings.section.about': 'About',
   'settings.lang.en': 'English',
@@ -240,6 +242,15 @@ export default {
   'settings.theme.light': 'Light',
   'settings.theme.dark': 'Dark',
   'settings.theme.system': 'System',
+  'settings.theme.codex': 'Codex',
+  'settings.theme.dracula': 'Dracula',
+  'settings.terminal.warp': 'Warp',
+  'settings.terminal.terminal': 'Terminal.app',
+  'settings.terminal.iterm2': 'iTerm2',
+  'settings.codexVisibilityDesc':
+    'Controls whether Codex lists include hidden internal review threads and archived threads.',
+  'settings.codex.showInternal': 'Show review sessions',
+  'settings.codex.showArchived': 'Show archived sessions',
   'settings.clearCache': 'Clear cache',
   'settings.clearCacheDesc':
     'Clears pin / sink preferences. Sessions and Trash are not affected.',
@@ -251,6 +262,8 @@ export default {
   'settings.updateFail': 'Update check failed: {e}',
   'settings.viewRelease': 'View release v{v}',
   'settings.version': 'Version',
+  'list.codex.internal': 'Review session',
+  'list.codex.archived': 'Archived session',
 
   // ---------- Stats dashboard ----------
   'stats.title': 'Statistics',

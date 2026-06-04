@@ -230,6 +230,8 @@ export default {
   'settings.title': '設定',
   'settings.section.lang': '言語',
   'settings.section.theme': '外観',
+  'settings.section.terminal': 'ターミナル',
+  'settings.section.codex': 'Codex',
   'settings.section.data': 'データ',
   'settings.section.about': 'バージョン情報',
   'settings.lang.en': 'English',
@@ -239,6 +241,15 @@ export default {
   'settings.theme.light': 'ライト',
   'settings.theme.dark': 'ダーク',
   'settings.theme.system': 'システム',
+  'settings.theme.codex': 'Codex',
+  'settings.theme.dracula': 'Dracula',
+  'settings.terminal.warp': 'Warp',
+  'settings.terminal.terminal': 'Terminal.app',
+  'settings.terminal.iterm2': 'iTerm2',
+  'settings.codexVisibilityDesc':
+    'Codex の一覧に、通常は非表示の内部レビューセッションとアーカイブ済みセッションを表示するかを切り替えます。',
+  'settings.codex.showInternal': 'レビューセッションを表示',
+  'settings.codex.showArchived': 'アーカイブ済みを表示',
   'settings.clearCache': 'キャッシュを削除',
   'settings.clearCacheDesc':
     'ピン留め / 沈め設定を削除します。セッションとゴミ箱には影響しません。',
@@ -250,6 +261,8 @@ export default {
   'settings.updateFail': 'アップデート確認に失敗: {e}',
   'settings.viewRelease': 'release v{v} を表示',
   'settings.version': 'バージョン',
+  'list.codex.internal': 'レビューセッション',
+  'list.codex.archived': 'アーカイブ済みセッション',
 
   'toast.sessionStatsComingSoon': 'セッション統計ページは間もなく公開予定',
 

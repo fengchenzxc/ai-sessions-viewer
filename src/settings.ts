@@ -1,14 +1,18 @@
 import { ref, watch, watchEffect } from 'vue'
-import type { StatsRange, StatsScope } from './types'
+import type { StatsRange, StatsScope, TerminalApp } from './types'
 
 export type Lang = 'en' | 'zh' | 'zh-TW' | 'ja'
-export type Theme = 'light' | 'dark' | 'system'
+export type Theme = 'light' | 'dark' | 'system' | 'codex' | 'dracula'
+export type { TerminalApp }
 
 const LANG_KEY = 'lang'
 const THEME_KEY = 'theme'
 const PREFS_KEY = 'projPrefs:v1'
 const STATS_SCOPE_KEY = 'statsScope:v1'
 const STATS_RANGE_KEY = 'statsRange:v1'
+const CODEX_SHOW_INTERNAL_KEY = 'codexShowInternalSessions:v1'
+const CODEX_SHOW_ARCHIVED_KEY = 'codexShowArchivedSessions:v1'
+const TERMINAL_APP_KEY = 'terminalApp:v1'
 
 /**
  * 根据浏览器/系统语言探测默认语言。
@@ -37,9 +41,20 @@ function detectSystemLang(): Lang {
 export const lang = ref<Lang>(
   (localStorage.getItem(LANG_KEY) as Lang | null) ?? detectSystemLang(),
 )
-export const theme = ref<Theme>(
-  (localStorage.getItem(THEME_KEY) as Theme | null) ?? 'system',
-)
+function readTheme(): Theme {
+  const v = localStorage.getItem(THEME_KEY)
+  return v === 'light' || v === 'dark' || v === 'system' || v === 'codex' || v === 'dracula'
+    ? v
+    : 'system'
+}
+export const theme = ref<Theme>(readTheme())
+export const codexShowInternalSessions = ref(localStorage.getItem(CODEX_SHOW_INTERNAL_KEY) === '1')
+export const codexShowArchivedSessions = ref(localStorage.getItem(CODEX_SHOW_ARCHIVED_KEY) === '1')
+function readTerminalApp(): TerminalApp {
+  const v = localStorage.getItem(TERMINAL_APP_KEY)
+  return v === 'warp' || v === 'terminal' || v === 'iterm2' ? v : 'terminal'
+}
+export const terminalApp = ref<TerminalApp>(readTerminalApp())
 
 export function setLang(l: Lang) {
   lang.value = l
@@ -51,13 +66,30 @@ export function setTheme(t: Theme) {
   localStorage.setItem(THEME_KEY, t)
 }
 
+export function setCodexShowInternalSessions(v: boolean) {
+  codexShowInternalSessions.value = v
+  localStorage.setItem(CODEX_SHOW_INTERNAL_KEY, v ? '1' : '0')
+}
+
+export function setCodexShowArchivedSessions(v: boolean) {
+  codexShowArchivedSessions.value = v
+  localStorage.setItem(CODEX_SHOW_ARCHIVED_KEY, v ? '1' : '0')
+}
+
+export function setTerminalApp(v: TerminalApp) {
+  terminalApp.value = v
+  localStorage.setItem(TERMINAL_APP_KEY, v)
+}
+
 function systemDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 export function applyTheme() {
-  const dark = theme.value === 'dark' || (theme.value === 'system' && systemDark())
+  const dark = theme.value === 'dark' || theme.value === 'dracula' || (theme.value === 'system' && systemDark())
   document.documentElement.classList.toggle('theme-dark', dark)
+  document.documentElement.classList.toggle('theme-codex', theme.value === 'codex')
+  document.documentElement.classList.toggle('theme-dracula', theme.value === 'dracula')
 }
 
 // 主题变化或系统外观变化时自动应用

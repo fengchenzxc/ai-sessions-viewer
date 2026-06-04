@@ -226,6 +226,8 @@ export default {
   'settings.title': '設定',
   'settings.section.lang': '語言',
   'settings.section.theme': '主題',
+  'settings.section.terminal': '終端機',
+  'settings.section.codex': 'Codex',
   'settings.section.data': '資料',
   'settings.section.about': '關於',
   'settings.lang.en': 'English',
@@ -235,6 +237,14 @@ export default {
   'settings.theme.light': '淺色',
   'settings.theme.dark': '深色',
   'settings.theme.system': '跟隨系統',
+  'settings.theme.codex': 'Codex',
+  'settings.theme.dracula': 'Dracula',
+  'settings.terminal.warp': 'Warp',
+  'settings.terminal.terminal': 'Terminal.app',
+  'settings.terminal.iterm2': 'iTerm2',
+  'settings.codexVisibilityDesc': '控制 Codex 會話列表是否額外顯示預設隱藏的內部 / 封存執行緒。',
+  'settings.codex.showInternal': '顯示審核會話',
+  'settings.codex.showArchived': '顯示已封存會話',
   'settings.clearCache': '清除快取',
   'settings.clearCacheDesc':
     '清除釘選 / 沉底偏好等快取設定，不影響會話和垃圾桶。',
@@ -246,6 +256,8 @@ export default {
   'settings.updateFail': '檢查更新失敗：{e}',
   'settings.viewRelease': '檢視 release v{v}',
   'settings.version': '版本',
+  'list.codex.internal': '審核會話',
+  'list.codex.archived': '已封存會話',
 
   'toast.sessionStatsComingSoon': '會話統計頁面開發中 —— 即將在本版本上線',
 

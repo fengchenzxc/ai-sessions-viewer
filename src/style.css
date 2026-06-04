@@ -61,9 +61,13 @@
   --radius-xl: 16px;
   --titlebar-h: 40px;
   --traffic-lights-w: 0px;
-  /* Geist 字体栈：自家字体先不引（避免 woff2 ~200KB），用 Inter 占位，
-     系统字体回落保证渲染权重一致。 */
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+  --font-ui-size: 14px;
+  --font-code-size: 12px;
+  --diff-added: #00a240;
+  --diff-removed: #e02e2a;
+  --skill: #751ed9;
+  /* macOS 原生字体栈：优先使用系统 SF / PingFang 渲染。 */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
     'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
   font-feature-settings: 'cv11', 'ss01', 'ss03';
 }
@@ -104,6 +108,66 @@
   --shadow-lg: 0 0 0 1px rgba(255, 255, 255, 0.10), 0 16px 50px rgba(0, 0, 0, 0.6);
 }
 
+:root.theme-codex {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f7f7f8;
+  --sidebar-bg: var(--bg);
+  --surface-hover: #f0f4f8;
+  --surface-active: #e8f2fc;
+  --border: #e6e7ea;
+  --border-strong: #bfc6d1;
+  --text: #0d0d0d;
+  --text-dim: #3d3d3d;
+  --text-mute: #767676;
+  --accent: #0169cc;
+  --accent-soft: rgba(1, 105, 204, 0.12);
+  --link: #0169cc;
+  --brand-codex: #0169cc;
+  --brand: var(--brand-codex);
+  --brand-soft: rgba(1, 105, 204, 0.12);
+  --danger: #e02e2a;
+  --danger-soft: rgba(224, 46, 42, 0.10);
+  --user-bubble: #f4f6f8;
+  --assistant-bubble: transparent;
+  --code-bg: #f7f7f8;
+  --code-fg: #0d0d0d;
+  --diff-added: #00a240;
+  --diff-removed: #e02e2a;
+  --skill: #751ed9;
+}
+
+:root.theme-dracula {
+  --bg: #282a36;
+  --surface: #282a36;
+  --surface-2: #242631;
+  --sidebar-bg: var(--bg);
+  --surface-hover: #343746;
+  --surface-active: #44475a;
+  --border: #3f4354;
+  --border-strong: #6272a4;
+  --text: #f8f8f2;
+  --text-dim: #deded8;
+  --text-mute: #a8a8a2;
+  --accent: #ff79c6;
+  --accent-soft: rgba(255, 121, 198, 0.16);
+  --link: #8be9fd;
+  --brand: #ff79c6;
+  --brand-soft: rgba(255, 121, 198, 0.16);
+  --danger: #ff5555;
+  --danger-soft: rgba(255, 85, 85, 0.16);
+  --user-bubble: #383a46;
+  --assistant-bubble: transparent;
+  --code-bg: #21222c;
+  --code-fg: #f8f8f2;
+  --diff-added: #50fa7b;
+  --diff-removed: #ff5555;
+  --skill: #ff79c6;
+  --shadow-sm: 0 0 0 1px rgba(248, 248, 242, 0.06);
+  --shadow-md: 0 0 0 1px rgba(248, 248, 242, 0.08), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 0 0 1px rgba(248, 248, 242, 0.10), 0 16px 50px rgba(0, 0, 0, 0.55);
+}
+
 /* Brand swap by agent (used only for tiny accents like project count badge) */
 .app.agent-codex {
   --brand: var(--brand-codex);
@@ -132,10 +196,10 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-ui-size);
   letter-spacing: -0.005em;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
   overflow: hidden;
 }
 
@@ -1730,7 +1794,7 @@ button {
   background: color-mix(in srgb, var(--text) 8%, transparent);
   padding: 1px 5px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-code-size);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
 }
 .bubble.user code {
@@ -1744,7 +1808,7 @@ button {
   border: 1px solid var(--border);
   overflow-x: auto;
   margin: 10px 0;
-  font-size: 12px;
+  font-size: var(--font-code-size);
   line-height: 1.55;
 }
 .code-block code {
@@ -1817,7 +1881,7 @@ details[open] > .block-summary > .chev {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--font-code-size);
   line-height: 1.5;
   max-height: 360px;
   overflow: auto;
@@ -1941,7 +2005,7 @@ details[open] > .block-summary > .chev {
   margin: -10px -12px;
   padding: 6px 0;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--font-code-size);
   line-height: 1.55;
   overflow-x: auto;
   background: var(--bg);
@@ -1952,10 +2016,10 @@ details[open] > .block-summary > .chev {
   min-width: max-content;
 }
 .diff-line.add {
-  background: rgba(34, 197, 94, 0.10);
+  background: color-mix(in srgb, var(--diff-added) 14%, transparent);
 }
 .diff-line.del {
-  background: rgba(239, 68, 68, 0.10);
+  background: color-mix(in srgb, var(--diff-removed) 14%, transparent);
 }
 .diff-no {
   width: 54px;
@@ -1972,22 +2036,22 @@ details[open] > .block-summary > .chev {
   text-align: center;
 }
 .diff-line.add .diff-sign {
-  color: #15803d;
+  color: var(--diff-added);
 }
 .diff-line.del .diff-sign {
-  color: #b91c1c;
+  color: var(--diff-removed);
 }
 .theme-dark .diff-line.add .diff-sign {
-  color: #4ade80;
+  color: var(--diff-added);
 }
 .theme-dark .diff-line.del .diff-sign {
-  color: #fb7185;
+  color: var(--diff-removed);
 }
 .theme-dark .diff-line.add {
-  background: rgba(34, 197, 94, 0.16);
+  background: color-mix(in srgb, var(--diff-added) 18%, transparent);
 }
 .theme-dark .diff-line.del {
-  background: rgba(248, 113, 113, 0.16);
+  background: color-mix(in srgb, var(--diff-removed) 18%, transparent);
 }
 .diff-text {
   padding-right: 16px;
@@ -2390,6 +2454,68 @@ details[open] > .block-summary > .chev {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.theme-select-wrap {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+}
+.theme-select-wrap:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.theme-select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.theme-select option {
+  color: #111;
+  background: #fff;
+}
+.theme-swatch {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.theme-swatch-light,
+.theme-swatch-system {
+  background: #ffffff;
+  color: #0d0d0d;
+}
+.theme-swatch-dark {
+  background: #0a0a0a;
+  color: #ededed;
+}
+.theme-swatch-codex {
+  background: #ffffff;
+  color: #0169cc;
+}
+.theme-swatch-dracula {
+  background: #282a36;
+  color: #ff79c6;
 }
 
 /* 主题三选一卡片网格 */

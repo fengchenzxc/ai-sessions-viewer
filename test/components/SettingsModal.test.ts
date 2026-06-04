@@ -70,13 +70,14 @@ describe('SettingsModal', () => {
     expect(lang.value).toBe('zh')
   })
 
-  it('renders the three themes and switches on click', async () => {
+  it('renders the theme dropdown and switches on change', async () => {
     const wrapper = factory()
-    const themeCards = wrapper.findAll('.theme-card')
-    expect(themeCards).toHaveLength(3)
+    const select = wrapper.find('.theme-select')
+    expect(select.exists()).toBe(true)
+    expect(select.findAll('option')).toHaveLength(5)
 
-    await themeCards[1].trigger('click') // Dark
-    expect(theme.value).toBe('dark')
+    await select.setValue('dracula')
+    expect(theme.value).toBe('dracula')
   })
 
   it('loads the app version on mount', async () => {

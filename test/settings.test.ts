@@ -38,9 +38,9 @@ describe('setLang', () => {
 
 describe('setTheme', () => {
   it('updates the ref and persists to localStorage', () => {
-    setTheme('dark')
-    expect(theme.value).toBe('dark')
-    expect(localStorage.getItem('theme')).toBe('dark')
+    setTheme('codex')
+    expect(theme.value).toBe('codex')
+    expect(localStorage.getItem('theme')).toBe('codex')
   })
 })
 
@@ -56,6 +56,19 @@ describe('applyTheme', () => {
     setTheme('light')
     applyTheme()
     expect(document.documentElement.classList.contains(DARK)).toBe(false)
+  })
+
+  it('applies Codex and Dracula theme classes independently', () => {
+    setTheme('codex')
+    applyTheme()
+    expect(document.documentElement.classList.contains('theme-codex')).toBe(true)
+    expect(document.documentElement.classList.contains(DARK)).toBe(false)
+
+    setTheme('dracula')
+    applyTheme()
+    expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
+    expect(document.documentElement.classList.contains(DARK)).toBe(true)
+    expect(document.documentElement.classList.contains('theme-codex')).toBe(false)
   })
 
   it('follows the system preference when the theme is system', () => {
@@ -143,8 +156,8 @@ describe('language detection on first load', () => {
   })
 
   it('restores a persisted theme, defaulting to system', async () => {
-    const stored = await freshLoad({ languages: ['en-US'], storedTheme: 'dark' })
-    expect(stored.theme.value).toBe('dark')
+    const stored = await freshLoad({ languages: ['en-US'], storedTheme: 'dracula' })
+    expect(stored.theme.value).toBe('dracula')
     const fallback = await freshLoad({ languages: ['en-US'] })
     expect(fallback.theme.value).toBe('system')
   })
