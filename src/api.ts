@@ -161,7 +161,7 @@ export const appVersion = () => invoke<string>('app_version')
 // 过滤掉 draft / prerelease，所以拿到的就是当前稳定版。Tauri WKWebView 自带 fetch，
 // 没有 CSP 限制（tauri.conf.json csp=null），不需要在 Rust 侧加 HTTP client 依赖。
 const RELEASES_LATEST_URL =
-  'https://api.github.com/repos/jerrywu001/cc-sessions-viewer/releases/latest'
+  'https://api.github.com/repos/fengchenzxc/ai-sessions-viewer/releases/latest'
 
 interface GhReleaseLatest {
   tag_name?: string

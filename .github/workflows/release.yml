@@ -140,12 +140,12 @@ jobs:
           body: |
             ## Downloads
 
-            - **macOS (Apple Silicon + Intel)** — `cc-sessions-viewer_*_universal.dmg`
-            - **Windows x64** — `cc-sessions-viewer_*_x64-setup.exe` / `*_x64_en-US.msi`
-            - **Linux x86_64** — `cc-sessions-viewer_*_amd64.deb` (Debian/Ubuntu) / `cc-sessions-viewer_*_amd64.AppImage` (portable)
+            - **macOS (Apple Silicon + Intel)** — `ai-sessions-viewer_*_universal.dmg`
+            - **Windows x64** — `ai-sessions-viewer_*_x64-setup.exe` / `*_x64_en-US.msi`
+            - **Linux x86_64** — `ai-sessions-viewer_*_amd64.deb` (Debian/Ubuntu) / `ai-sessions-viewer_*_amd64.AppImage` (portable)
 
             On macOS first launch the unsigned `.app` may prompt — right-click → **Open** to bypass Gatekeeper.
-            On Linux the `.AppImage` needs `chmod +x` before running; the `.deb` installs with `sudo apt install ./cc-sessions-viewer_*_amd64.deb`.
+            On Linux the `.AppImage` needs `chmod +x` before running; the `.deb` installs with `sudo apt install ./ai-sessions-viewer_*_amd64.deb`.
 
             Full version history → [`CHANGELOG.md`](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
         env:

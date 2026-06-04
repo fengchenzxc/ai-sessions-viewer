@@ -334,7 +334,7 @@ fn query_codex_app_thread_list() -> CodexAppListSnapshot {
                     "method": "initialize",
                     "params": {
                         "clientInfo": {
-                            "name": "cc-sessions-viewer",
+                            "name": "ai-sessions-viewer",
                             "version": env!("CARGO_PKG_VERSION"),
                         },
                         "capabilities": { "experimentalApi": true },

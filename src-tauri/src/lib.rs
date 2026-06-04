@@ -586,7 +586,7 @@ mod terminal_tests {
     #[test]
     fn create_terminal_script_uses_hidden_tmp_file_and_self_deletes() {
         let dir = std::env::temp_dir().join(format!(
-            "cc-sessions-viewer-terminal-test-{}",
+            "ai-sessions-viewer-terminal-test-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);

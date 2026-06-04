@@ -40,7 +40,7 @@ The app is **read-only** against the originals — deletion is a soft move into 
 
 ## Changes in this fork
 
-This fork is based on [jerrywu001/cc-sessions-viewer](https://github.com/jerrywu001/cc-sessions-viewer) and keeps the same Tauri + Vue + Rust architecture. Compared with the original project, it adds:
+This repository is maintained at [fengchenzxc/ai-sessions-viewer](https://github.com/fengchenzxc/ai-sessions-viewer) and keeps the same Tauri + Vue + Rust architecture. Compared with the original project, it adds:
 
 - **Codex desktop parity** — Codex sessions are cross-checked against Codex app metadata, including app-list rank, first-page position, archived status, and internal guardian / auto-review subthreads.
 - **Codex filters and labels** — settings can independently show or hide Codex internal review sessions and archived sessions; the session list marks them as review or archived sessions.
@@ -79,22 +79,22 @@ Grab the latest installer from [Releases](https://github.com/fengchenzxc/ai-sess
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon + Intel) | `cc-sessions-viewer_<ver>_universal.dmg` |
-| Windows x64 | `cc-sessions-viewer_<ver>_x64-setup.exe` |
-| Linux x86_64 (Debian/Ubuntu) | `cc-sessions-viewer_<ver>_amd64.deb` |
-| Linux x86_64 (portable) | `cc-sessions-viewer_<ver>_amd64.AppImage` |
+| macOS (Apple Silicon + Intel) | `ai-sessions-viewer_<ver>_universal.dmg` |
+| Windows x64 | `ai-sessions-viewer_<ver>_x64-setup.exe` |
+| Linux x86_64 (Debian/Ubuntu) | `ai-sessions-viewer_<ver>_amd64.deb` |
+| Linux x86_64 (portable) | `ai-sessions-viewer_<ver>_amd64.AppImage` |
 
 On macOS the `.app` is **ad-hoc signed but not notarized**, so first launch may show *"Apple cannot verify…"*. Two ways past it:
 
 - Right-click the app in Finder → **Open** → confirm in the dialog (one-time).
 - Or strip the quarantine attribute in Terminal:
   ```bash
-  sudo xattr -dr com.apple.quarantine /Applications/cc-sessions-viewer.app
+  sudo xattr -dr com.apple.quarantine /Applications/ai-sessions-viewer.app
   ```
 
 On Linux the `.AppImage` is portable — `chmod +x` and run. The `.deb` installs with:
 ```bash
-sudo apt install ./cc-sessions-viewer_<ver>_amd64.deb
+sudo apt install ./ai-sessions-viewer_<ver>_amd64.deb
 ```
 
 ### Build from source
