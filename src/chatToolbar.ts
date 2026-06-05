@@ -9,8 +9,12 @@
 
 import { ref } from 'vue'
 
-/** true = 把所有 <details>（tool_use / tool_result / thinking）都折叠；false = 都展开。 */
-export const toolsCollapsed = ref(false)
+/** true = 把所有 <details>（tool_use / tool_result / thinking）都折叠；false = 都展开。
+ *  默认 true —— 必须跟 DOM 初始状态对齐：`<details>` 渲染时没绑 `:open`，
+ *  浏览器默认就是"关闭/折叠"。如果这里默认 false（"已展开"），用户首次点按钮
+ *  会先把 ref 翻成 true 触发 sweepDetails(false) 重新关闭一遍已经关闭的 details
+ *  ——视觉上没动静，等第二次点才真展开。 */
+export const toolsCollapsed = ref(true)
 
 /** 当前搜索关键词；空串表示未搜索 */
 export const search = ref('')
@@ -59,9 +63,10 @@ export function focusSearchBox() {
   focuser?.()
 }
 
-/** 切换会话 / 关闭会话时把所有状态归零。 */
+/** 切换会话 / 关闭会话时把所有状态归零。toolsCollapsed 回到 true ——
+ *  新会话的 <details> 默认就是关闭的，state 跟着对齐。 */
 export function resetChatToolbar() {
-  toolsCollapsed.value = false
+  toolsCollapsed.value = true
   search.value = ''
   searchCount.value = 0
   searchIndex.value = 0

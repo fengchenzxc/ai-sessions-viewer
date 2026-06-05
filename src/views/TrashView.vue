@@ -9,6 +9,9 @@ import {
   IconRestore,
   IconInbox,
   IconCheck,
+  IconSort,
+  IconSelect,
+  IconClose,
 } from '../components/icons'
 import {
   filterTrash,
@@ -16,6 +19,8 @@ import {
   selectedTrash,
   toggleTrashSelected,
   trashSearch,
+  trashSort,
+  exitSelectMode,
 } from '../trashToolbar'
 
 const props = defineProps<{
@@ -28,10 +33,34 @@ const emit = defineEmits<{
   (e: 'open', item: TrashItem): void
   (e: 'restore', item: TrashItem): void
   (e: 'permanent-delete', item: TrashItem): void
+  /** 批量恢复：原本由 TrashTopbar 触发，现已挪到 list-head 顶栏里。 */
+  (e: 'batch-restore'): void
 }>()
 
 // 搜索 / 项目筛选 / 时间排序后的可见列表 —— 工具栏状态来自 trashToolbar 模块。
 const visibleTrash = computed(() => filterTrash(props.trash))
+
+// ---------- list-head 的批量选择 UI（原本住在 TrashTopbar，挪过来减少
+// "topbar + list-head 两排 icon-only 按钮重叠" 的扫描负担）。
+function toggleTrashSort() {
+  trashSort.value = trashSort.value === 'recent' ? 'oldest' : 'recent'
+}
+const headSelectedCount = computed(
+  () => props.trash.filter((it) => selectedTrash.value.has(it.trashFile)).length,
+)
+const headAllSelected = computed(
+  () =>
+    visibleTrash.value.length > 0 &&
+    visibleTrash.value.every((it) => selectedTrash.value.has(it.trashFile)),
+)
+function headToggleSelectAll() {
+  const next = new Set(selectedTrash.value)
+  for (const it of visibleTrash.value) {
+    if (headAllSelected.value) next.delete(it.trashFile)
+    else next.add(it.trashFile)
+  }
+  selectedTrash.value = next
+}
 
 // 批量模式下点整张卡片即勾选；否则打开该会话的只读详情。
 function onCardClick(item: TrashItem) {
@@ -99,9 +128,66 @@ onUnmounted(() => clearTimeout(scrollIdle))
       <h2>{{ t('trash.title') }}</h2>
       <div class="path">{{ t('trash.subtitle') }}</div>
     </div>
-    <button class="btn danger" :disabled="!trash.length" @click="emit('clear')">
-      {{ t('trash.clearAll') }}
-    </button>
+    <div class="list-head-actions">
+      <template v-if="selectMode">
+        <span class="ct-search-count">{{
+          t('trash.tb.selectedCount', { n: headSelectedCount })
+        }}</span>
+        <!-- 选择控制：select-all + 取消选择，跟下面的"对选中项的动作"用细竖线分开。 -->
+        <button
+          class="icon-btn"
+          :class="{ active: headAllSelected }"
+          v-tooltip="headAllSelected ? t('trash.tb.selectNone') : t('trash.tb.selectAll')"
+          @click="headToggleSelectAll"
+        >
+          <IconCheck />
+        </button>
+        <button
+          class="icon-btn"
+          v-tooltip="t('trash.tb.selectCancel')"
+          @click="exitSelectMode"
+        >
+          <IconClose />
+        </button>
+        <span class="list-head-divider" aria-hidden="true" />
+        <button
+          class="icon-btn"
+          :disabled="headSelectedCount === 0"
+          v-tooltip="t('trash.tb.restoreSelected')"
+          @click="emit('batch-restore')"
+        >
+          <IconRestore />
+        </button>
+      </template>
+      <template v-else>
+        <!-- 排序 / 进入批量模式 —— 原本住在 TrashTopbar 的 .ct-actions 里；
+             与下方 Empty Trash 隔了一层 topbar，两行 icon-only 控件视觉冲突。
+             挪到这里后顶栏只剩 项目筛选 + 搜索 一条横线。 -->
+        <button
+          v-if="trash.length > 1"
+          class="icon-btn"
+          v-tooltip="
+            trashSort === 'recent'
+              ? t('trash.tb.sortRecent')
+              : t('trash.tb.sortOldest')
+          "
+          @click="toggleTrashSort"
+        >
+          <IconSort />
+        </button>
+        <button
+          v-if="trash.length > 1"
+          class="icon-btn"
+          v-tooltip="t('trash.tb.select')"
+          @click="selectMode = true"
+        >
+          <IconSelect />
+        </button>
+        <button class="btn danger" :disabled="!trash.length" @click="emit('clear')">
+          {{ t('trash.clearAll') }}
+        </button>
+      </template>
+    </div>
   </div>
   <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
   <div v-else-if="!trash.length" class="empty">

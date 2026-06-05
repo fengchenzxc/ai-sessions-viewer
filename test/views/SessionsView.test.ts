@@ -14,6 +14,7 @@ const { searchMock, cancelMock, usageMock } = vi.hoisted(() => ({
     inputTokens: 0,
     outputTokens: 0,
     cacheCreationInputTokens: 0,
+    cacheCreation1hInputTokens: 0,
     cacheReadInputTokens: 0,
     reasoningOutputTokens: 0,
     total: 0,
@@ -33,7 +34,6 @@ import {
   selectedSessions,
   sessionSearch,
   sessionSelectMode,
-  sessionWithIdOnly,
 } from '../../src/sessionsToolbar'
 import type { ProjectInfo, SearchHit, SessionMeta } from '../../src/types'
 
@@ -133,7 +133,7 @@ describe('SessionsView', () => {
     expect(wrapper.find('.session-meta').text()).toContain('首屏 0/50 · rank 64')
   })
 
-  it('does not show Codex app-server rank metadata for non-Codex agents', () => {
+  it('shows Codex app-server metadata carried by Claude sessions', () => {
     setLang('zh')
     const wrapper = factory([
       session({
@@ -141,10 +141,16 @@ describe('SessionsView', () => {
         codexAppListScanned: 1000,
         codexAppFirstPageSize: 50,
         codexAppFirstPagePosition: 0,
-      } as Partial<SessionMeta>),
+      }),
     ])
+    expect(wrapper.find('.session-meta').text()).toContain('首屏 0/50 · rank 64')
+  })
+
+  it('does not show Codex app-server rank metadata without scan data', () => {
+    setLang('zh')
+    const wrapper = factory([session()])
     expect(wrapper.find('.session-meta').text()).not.toContain('首屏 0/50')
-    expect(wrapper.find('.session-meta').text()).not.toContain('rank 64')
+    expect(wrapper.find('.session-meta').text()).not.toContain('rank')
   })
 
   it('shows rank placeholder for Codex sessions absent from the scanned app-server window', () => {
@@ -178,6 +184,20 @@ describe('SessionsView', () => {
     )
     const tag = wrapper.find('.codex-special-tag')
     expect(tag.text()).toBe('审核会话')
+    expect(wrapper.find('.session-meta').text()).not.toContain('首屏 1/50')
+  })
+
+  it('marks internal Claude sessions carrying Codex app metadata', () => {
+    setLang('zh')
+    const wrapper = factory([
+      session({
+        codexInternal: true,
+        codexAppListRank: 1,
+        codexAppListScanned: 50,
+        codexAppFirstPagePosition: 1,
+      }),
+    ])
+    expect(wrapper.find('.codex-special-tag').text()).toBe('审核会话')
     expect(wrapper.find('.session-meta').text()).not.toContain('首屏 1/50')
   })
 
@@ -261,13 +281,6 @@ describe('SessionsView', () => {
       )
     })
 
-    it('shows the no-match state when filters exclude every session', () => {
-      sessionWithIdOnly.value = true
-      const wrapper = factory([session({ path: 'a', id: '' })])
-      expect(wrapper.findAll('.session-card')).toHaveLength(0)
-      expect(wrapper.text()).toContain('No sessions match')
-    })
-
     it('shows the no-match state when the backend search returns nothing', async () => {
       searchMock.mockResolvedValueOnce([])
       const wrapper = factory([session({ path: 'a', title: 'Refactor parser' })])
@@ -316,9 +329,16 @@ describe('SessionsView', () => {
   })
 
   describe('header actions', () => {
+    // 用 aria-label 找按钮，避免依赖 list-head-actions 里按钮的位置 ——
+    // 现在那行里同时有 hash 过滤 / 批量选择入口 / 新建 / 刷新 / 删除项目。
+    const findByLabel = (wrapper: ReturnType<typeof factory>, label: string) =>
+      wrapper.findAll('.list-head-actions .icon-btn').find((b) =>
+        b.attributes('aria-label')?.startsWith(label),
+      )!
+
     it('emits "new-session" when the new-session button is clicked', async () => {
       const wrapper = factory()
-      await wrapper.find('.list-head-actions .icon-btn').trigger('click')
+      await findByLabel(wrapper, 'New session').trigger('click')
       expect(wrapper.emitted('new-session')).toHaveLength(1)
     })
 
@@ -333,22 +353,63 @@ describe('SessionsView', () => {
         } as Props,
         global: { directives: { tooltip: vTooltip } },
       })
-      // 目录已不存在 → 新建会话 / 刷新都没意义，只剩删除项目
+      // 目录已不存在 → 新建会话 / 刷新都没意义，只剩删除项目。
+      // 没有会话 (sessions=[]) → 「批量选择」入口也不渲染。
       expect(wrapper.findAll('.list-head-actions .icon-btn')).toHaveLength(1)
+      expect(wrapper.find('.list-head-actions .icon-btn[aria-label^="New session"]').exists()).toBe(
+        false,
+      )
+      expect(wrapper.find('.list-head-actions .icon-btn[aria-label^="Reload"]').exists()).toBe(
+        false,
+      )
     })
 
     it('emits "refresh" when the header refresh button is clicked', async () => {
       const wrapper = factory()
-      const buttons = wrapper.findAll('.list-head-actions .icon-btn')
-      await buttons[1].trigger('click')
+      await findByLabel(wrapper, 'Reload').trigger('click')
       expect(wrapper.emitted('refresh')).toHaveLength(1)
     })
 
     it('emits "delete-project" when the header delete button is clicked', async () => {
       const wrapper = factory()
-      const buttons = wrapper.findAll('.list-head-actions .icon-btn')
-      await buttons[2].trigger('click')
+      await findByLabel(wrapper, 'Delete project').trigger('click')
       expect(wrapper.emitted('delete-project')).toHaveLength(1)
+    })
+
+    it('shows the "select multiple" entry only when there are 2+ sessions', () => {
+      const w1 = factory([session()])
+      expect(
+        w1.find('.list-head-actions .icon-btn[aria-label^="Select multiple"]').exists(),
+      ).toBe(false)
+      const w2 = factory([session(), session({ path: '/work/proj/b.jsonl' })])
+      expect(
+        w2.find('.list-head-actions .icon-btn[aria-label^="Select multiple"]').exists(),
+      ).toBe(true)
+    })
+
+    it('flips into select mode from the entry button', async () => {
+      const wrapper = factory([session(), session({ path: '/work/proj/b.jsonl' })])
+      await findByLabel(wrapper, 'Select multiple').trigger('click')
+      expect(sessionSelectMode.value).toBe(true)
+    })
+
+    it('emits batch-delete from the danger button in select mode', async () => {
+      sessionSelectMode.value = true
+      selectedSessions.value = new Set(['/work/proj/s.jsonl'])
+      const wrapper = factory()
+      await wrapper.find('.list-head-actions .icon-btn.danger').trigger('click')
+      expect(wrapper.emitted('batch-delete')).toHaveLength(1)
+    })
+
+    it('emits batch-export with the picked format in select mode', async () => {
+      sessionSelectMode.value = true
+      selectedSessions.value = new Set(['/work/proj/s.jsonl'])
+      const wrapper = factory()
+      await wrapper.find('.list-head-actions .export-menu-wrap .icon-btn').trigger('click')
+      const items = wrapper.findAll('.list-head-actions .export-menu-item')
+      expect(items).toHaveLength(3) // md / html / json
+      await items[1].trigger('click') // HTML
+      expect(wrapper.emitted('batch-export')).toEqual([['html']])
     })
   })
 

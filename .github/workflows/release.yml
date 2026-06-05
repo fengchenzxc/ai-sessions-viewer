@@ -147,6 +147,22 @@ jobs:
             On macOS first launch the unsigned `.app` may prompt — right-click → **Open** to bypass Gatekeeper.
             On Linux the `.AppImage` needs `chmod +x` before running; the `.deb` installs with `sudo apt install ./ai-sessions-viewer_*_amd64.deb`.
 
+            ## 更新日志（中文）
+
+            - 新增 macOS 菜单栏托盘与关闭到托盘，窗口可从托盘菜单恢复。
+            - 新增导出历史与无损 JSON 导出，已导出的原始会话可快速重新打开。
+            - 新增实时模型价格页面，统计默认查看最近 6 个月，并改进模型价格准确性。
+            - 聊天与 HTML 导出支持 Markdown 表格、Mermaid、JSON 高亮、diff 高亮和 URL 自动链接。
+            - 设置页改为 General / Advanced 分组，保留 Warp / Terminal.app / iTerm2 终端选择。
+
+            ## Changelog (English)
+
+            - Added macOS tray support and close-to-tray window behavior.
+            - Added export history and lossless JSON export for reopening original sessions.
+            - Added live model pricing, a six-month default stats range, and improved pricing accuracy.
+            - Added Markdown tables, Mermaid, JSON highlighting, diff highlighting, and URL linkification in chat and HTML export.
+            - Redesigned Settings into General / Advanced tabs while preserving Warp / Terminal.app / iTerm2 selection.
+
             Full version history → [`CHANGELOG.md`](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
         env:
           GITHUB_TOKEN: ${{ secrets.AI_SESSIONS_VIEWER_PAT }}

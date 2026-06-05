@@ -56,6 +56,59 @@ describe('renderText', () => {
     expect(renderText('hello')).toBe('<div class="text-run">hello</div>')
   })
 
+  // GFM table 渲染 —— 回归用户反馈："table 渲染出来是 `| 路由 | 路径 | 文件 |\n|---|---|---|`
+  // 一坨原始字符 + 每个 `|` 单元被 inline code 包成小灰块"。
+  it('renders a GFM table with header, separator and body into a <table>', () => {
+    const html = renderText('| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |')
+    // 外层 .md-table-wrap 提供横向滚动（列多时不撑爆气泡），里头才是 <table>。
+    expect(html).toContain('<div class="md-table-wrap"><table class="md-table">')
+    expect(html).toContain('<th>A</th>')
+    expect(html).toContain('<th>B</th>')
+    expect(html).toContain('<td>1</td>')
+    expect(html).toContain('<td>4</td>')
+    // 不能再有原始的 `|` 分隔符泄漏出来
+    expect(html).not.toContain('| A | B |')
+  })
+
+  it('applies column alignment from the separator row colons', () => {
+    const html = renderText('| L | C | R |\n|:---|:---:|---:|\n| a | b | c |')
+    expect(html).toContain('text-align:left')
+    expect(html).toContain('text-align:center')
+    expect(html).toContain('text-align:right')
+  })
+
+  it('honors inline formatting inside table cells', () => {
+    const html = renderText('| name | path |\n|---|---|\n| **bold** | `code` |')
+    expect(html).toContain('<td><strong>bold</strong></td>')
+    expect(html).toContain('<td><code>code</code></td>')
+  })
+
+  // Mermaid 块：emit 占位符给 ChatView 后置 mermaid.render() 替换；fallback 露源码。
+  it('emits a mermaid placeholder with encoded source for ```mermaid blocks', () => {
+    const html = renderText('```mermaid\nflowchart TD\n  A --> B\n```')
+    expect(html).toContain('<div class="md-mermaid"')
+    expect(html).toContain('data-source="')
+    expect(html).toContain(encodeURIComponent('flowchart TD\n  A --> B'))
+    // 渲染前先露源码 fallback
+    expect(html).toContain('<pre class="md-mermaid-source">flowchart TD')
+    // 不应该走普通 code-block 分支
+    expect(html).not.toContain('<pre class="code-block">')
+  })
+
+  it('still emits a regular code-block for non-mermaid fenced code', () => {
+    const html = renderText('```js\nconst x = 1\n```')
+    expect(html).toContain('<pre class="code-block">')
+    expect(html).not.toContain('md-mermaid')
+  })
+
+  // 非 table 文本和 table 混合时，前后文本各自走原来的 .text-run 渲染。
+  it('keeps surrounding prose around an inline table', () => {
+    const html = renderText('before\n\n| A |\n|---|\n| 1 |\n\nafter')
+    expect(html).toContain('<div class="text-run">before')
+    expect(html).toContain('<table class="md-table">')
+    expect(html).toContain('after</div>')
+  })
+
   it('drops <command-message> and emits <command-name> as a code chip', () => {
     const html = renderText(
       '<command-message>init</command-message><command-name>/init</command-name>',
@@ -322,15 +375,16 @@ describe('formatTokens', () => {
     expect(formatTokens(12_345)).toBe('12.3K')
   })
 
-  it('renders 100K+ as integer K (no decimals)', () => {
-    expect(formatTokens(100_000)).toBe('100K')
-    expect(formatTokens(345_678)).toBe('346K')
+  it('keeps the 1-decimal place even past 100K (codeburn parity, no silent rounding)', () => {
+    expect(formatTokens(100_000)).toBe('100K') // 100.0 → trailing .0 trimmed
+    expect(formatTokens(240_500)).toBe('240.5K')
+    expect(formatTokens(345_678)).toBe('345.7K')
   })
 
   it('switches to M at one million', () => {
     expect(formatTokens(1_000_000)).toBe('1M')
     expect(formatTokens(1_234_567)).toBe('1.2M')
-    expect(formatTokens(123_456_789)).toBe('123M')
+    expect(formatTokens(123_456_789)).toBe('123.5M')
   })
 
   it('returns "0" for non-finite / negative input', () => {

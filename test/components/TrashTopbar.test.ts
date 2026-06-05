@@ -5,13 +5,15 @@ import { vTooltip } from '../../src/tooltip'
 import { setLang } from '../../src/settings'
 import {
   resetTrashToolbar,
-  selectMode,
-  selectedTrash,
   trashProject,
   trashSearch,
-  trashSort,
 } from '../../src/trashToolbar'
 import type { TrashItem } from '../../src/types'
+
+// Only the project filter + search box live in the topbar; sort, select-mode
+// entry, and batch-restore moved into TrashView's body header (see
+// `list-head-actions` in TrashView.test.ts) so the topbar no longer competes
+// with the body header's "Empty Trash" row.
 
 beforeEach(() => {
   setLang('en')
@@ -29,7 +31,6 @@ const item = (over: Partial<TrashItem> & { trashFile: string }): TrashItem => ({
   ...over,
 })
 
-// 默认两条 —— 排序 / 批量选择按钮只在 ≥2 条时才渲染。
 const factory = (
   items: TrashItem[] = [item({ trashFile: 'a' }), item({ trashFile: 'b' })],
 ) =>
@@ -45,29 +46,6 @@ describe('TrashTopbar', () => {
     expect(trashSearch.value).toBe('') // 还没过防抖
     await new Promise((r) => setTimeout(r, 280))
     expect(trashSearch.value).toBe('hello')
-  })
-
-  it('toggles the time sort', async () => {
-    const wrapper = factory()
-    expect(trashSort.value).toBe('recent')
-    await wrapper.findAll('.ct-actions .ct-btn')[0].trigger('click')
-    expect(trashSort.value).toBe('oldest')
-  })
-
-  it('enters select mode from the select button', async () => {
-    const wrapper = factory()
-    await wrapper.findAll('.ct-actions .ct-btn')[1].trigger('click')
-    expect(selectMode.value).toBe(true)
-  })
-
-  it('hides the sort and select buttons unless there are at least two items', () => {
-    // 排序 / 批量选择在 0 或 1 条时没有意义，不渲染。
-    expect(factory([]).findAll('.ct-actions .ct-btn')).toHaveLength(0)
-    expect(
-      factory([item({ trashFile: 'a' })]).findAll('.ct-actions .ct-btn'),
-    ).toHaveLength(0)
-    // 两条时显示 [排序, 批量选择]。
-    expect(factory().findAll('.ct-actions .ct-btn')).toHaveLength(2)
   })
 
   it('lists distinct projects in the filter dropdown and applies a pick', async () => {
@@ -108,50 +86,8 @@ describe('TrashTopbar', () => {
     wrapper.unmount()
   })
 
-  describe('select mode', () => {
-    it('select-all toggles the whole visible set', async () => {
-      const wrapper = factory([item({ trashFile: 'a' }), item({ trashFile: 'b' })])
-      selectMode.value = true
-      await wrapper.vm.$nextTick()
-
-      // [select-all, restore, cancel]
-      await wrapper.findAll('.ct-actions .ct-btn')[0].trigger('click')
-      expect(selectedTrash.value.size).toBe(2)
-
-      await wrapper.findAll('.ct-actions .ct-btn')[0].trigger('click')
-      expect(selectedTrash.value.size).toBe(0)
-    })
-
-    it('keeps the restore button disabled until something is selected', async () => {
-      const wrapper = factory([item({ trashFile: 'a' })])
-      selectMode.value = true
-      await wrapper.vm.$nextTick()
-
-      const restoreBtn = () => wrapper.findAll('.ct-actions .ct-btn')[1]
-      expect(restoreBtn().attributes('disabled')).toBeDefined()
-
-      selectedTrash.value = new Set(['a'])
-      await wrapper.vm.$nextTick()
-      expect(restoreBtn().attributes('disabled')).toBeUndefined()
-    })
-
-    it('emits batch-restore when restore is clicked with a selection', async () => {
-      const wrapper = factory([item({ trashFile: 'a' })])
-      selectMode.value = true
-      selectedTrash.value = new Set(['a'])
-      await wrapper.vm.$nextTick()
-
-      await wrapper.findAll('.ct-actions .ct-btn')[1].trigger('click')
-      expect(wrapper.emitted('batch-restore')).toHaveLength(1)
-    })
-
-    it('exits select mode from the cancel button', async () => {
-      const wrapper = factory()
-      selectMode.value = true
-      await wrapper.vm.$nextTick()
-
-      await wrapper.findAll('.ct-actions .ct-btn')[2].trigger('click')
-      expect(selectMode.value).toBe(false)
-    })
+  it('does not render the action bar — those controls live in TrashView now', () => {
+    const wrapper = factory()
+    expect(wrapper.find('.ct-actions').exists()).toBe(false)
   })
 })

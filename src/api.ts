@@ -60,7 +60,7 @@ export const agentStats = (agent: Agent) =>
 /** 流式启动一次统计扫描；函数立刻返回。Worker 通过 `stats://progress` / `stats://done` /
  *  `stats://error` 事件 emit 结果，前端用 `useStatsStream` 监听。
  *  `scope`：'all' | 'claude' | 'codex' | 'gemini' | `session:<agent>:<absolutePath>`。
- *  `range`：'today' | 'days7' | 'days30' | 'all'（session-scope 时被忽略）。 */
+ *  `range`：'today' | 'days7' | 'days30' | 'month' | 'months6'（session-scope 时被忽略）。 */
 export const startAgentStats = (
   scope: StatsScope | string,
   range: StatsRange,

@@ -144,6 +144,26 @@ impl SessionSource for ClaudeSource {
         Ok(out)
     }
 
+    /// 单会话同伴文件：`<projects>/<projectKey>/<sessionId>.jsonl` 的旁边可能
+    /// 有 `<projects>/<projectKey>/<sessionId>/subagents/*.jsonl`。把它们也算入
+    /// 单会话统计，跟全局 by-session 的口径一致（codeburn 同样做法）。
+    fn discover_session_companions(&self, path: &str) -> Vec<SessionMeta> {
+        let parent_path = Path::new(path);
+        // parent.with_extension("") -> "<projects>/<projectKey>/<sessionId>"
+        let sub_dir = parent_path.with_extension("").join("subagents");
+        let Ok(entries) = fs::read_dir(&sub_dir) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for sf in entries.flatten() {
+            let sp = sf.path();
+            if is_jsonl(&sp) {
+                out.push(scan(&sp));
+            }
+        }
+        out
+    }
+
     fn rename_session(&self, path: &Path, name: &str) -> Result<(), String> {
         let trimmed = validate_rename_name(name)?;
         let id = path
@@ -478,12 +498,33 @@ fn mirror_runtime_name(session_id: &str, name: &str) {
 }
 
 /// 单遍扫描一个 jsonl，提取标题 / 时间 / 消息数等元信息。
+/// Subagent JSONL 的路径形态：`.../<project_dir>/<parent_uuid>/subagents/agent-*.jsonl`。
+/// 父目录名是 `subagents` 即认定它是子代理产物。
+fn is_subagent_path(fp: &Path) -> bool {
+    fp.parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        == Some("subagents")
+}
+
 fn scan(fp: &Path) -> SessionMeta {
     let file_name = fp
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let id = file_name.trim_end_matches(".jsonl").to_string();
+    // Subagent 文件的 session id 用父 session 的 UUID，让聚合器自然把它们的
+    // cost / calls / tokens 合到父 session 下 —— 数据 0 丢失，session 计数不再被
+    // inflated（典型场景：sidebar 显示 198 个 session，统计页之前算 298 个，差额
+    // ~100 全是 subagent 文件被当成独立 session；现在两处一致）。
+    let id = if is_subagent_path(fp) {
+        fp.parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| file_name.trim_end_matches(".jsonl").to_string())
+    } else {
+        file_name.trim_end_matches(".jsonl").to_string()
+    };
     let size = fs::metadata(fp).map(|m| m.len()).unwrap_or(0);
     let modified = mtime_millis(fp);
 
@@ -828,10 +869,29 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
         if let Some(u) = message.get("usage") {
             usage.input_tokens = u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
             usage.output_tokens = u.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
-            usage.cache_creation_input_tokens = u
+            // cache_creation 有两种形状：
+            //   legacy: cache_creation_input_tokens = 整数（不分 tier）
+            //   split:  cache_creation = { ephemeral_5m_input_tokens: N, ephemeral_1h_input_tokens: M }
+            // 两者通常同时出现，legacy 字段 = 5m + 1h。我们这里把 total 收齐到
+            // `cache_creation_input_tokens`，再把 1h 子集单独记到 `_1h_` 字段供 cost 算 2× 计费。
+            let legacy = u
                 .get("cache_creation_input_tokens")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
+            let cc = u.get("cache_creation");
+            let fivem = cc
+                .and_then(|x| x.get("ephemeral_5m_input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let one_h = cc
+                .and_then(|x| x.get("ephemeral_1h_input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            // 缺哪个用哪个：拼一份 5m + 1h；如果 split 是 0 / 缺失，退回 legacy。
+            let split_total = fivem.saturating_add(one_h);
+            usage.cache_creation_input_tokens = legacy.max(split_total);
+            // 1h 子集要 ≤ total，钳一下防御性。Anthropic 偶尔分裂上报、legacy 缺一拍。
+            usage.cache_creation_1h_input_tokens = one_h.min(usage.cache_creation_input_tokens);
             usage.cache_read_input_tokens = u
                 .get("cache_read_input_tokens")
                 .and_then(Value::as_u64)
@@ -1144,5 +1204,32 @@ mod tests {
             s.usage.output_tokens,
             s.usage.cache_read_input_tokens
         );
+    }
+
+    // ---- subagent fold --------------------------------------------------
+
+    #[test]
+    fn scan_folds_subagent_into_parent_session_id() {
+        // sidebar 已经把 subagent 排除在 session 列表外（list_sessions 只读
+        // <project>/*.jsonl），但 stats 走的是 scan() —— 这里要保证 subagent 用
+        // 父 UUID 作为 session_id，让聚合器把它们合到父 session 下，避免一个
+        // 概念两个数（sidebar 198 / stats 298）。
+        let p = std::path::PathBuf::from(
+            "/x/.claude/projects/-Users-x-app/abc123-uuid/subagents/agent-foo.jsonl",
+        );
+        assert!(is_subagent_path(&p));
+        let meta = scan(&p);
+        assert_eq!(
+            meta.id, "abc123-uuid",
+            "subagent session id should be parent uuid"
+        );
+    }
+
+    #[test]
+    fn scan_keeps_top_level_session_id_unchanged() {
+        let p = std::path::PathBuf::from("/x/.claude/projects/-Users-x-app/abc123-uuid.jsonl");
+        assert!(!is_subagent_path(&p));
+        let meta = scan(&p);
+        assert_eq!(meta.id, "abc123-uuid");
     }
 }

@@ -23,7 +23,7 @@ use crate::types::{
     AgentStats, DailyActivity, Msg, ProjectInfo, ProjectStats, SearchHit, SessionMeta, SessionPage,
     UsageSummary,
 };
-use crate::util::yyyymmdd_utc;
+use crate::util::yyyymmdd_local;
 
 /// 「会话 → 用户消息纯文本」缓存：搜索时跳过 JSONL 重新解析。
 /// key 是文件绝对路径；value 是 (mtime, Vec<(msg_index, msg_uuid, text)>)。
@@ -161,6 +161,14 @@ pub trait SessionSource: Send + Sync {
             .list_sessions(project_key, 0, usize::MAX, false, false)?
             .sessions)
     }
+
+    /// 单会话统计时的同伴文件 —— 默认返回空，Claude 重写以返回
+    /// `<parent>/subagents/*.jsonl`。`run_session_scope` 把它们和 parent 一起喂给
+    /// 同一个 Aggregator，让单会话 cost / call 跟全局 by-session 那一行对得上。
+    /// 共用一个 aggregator，`seen_message_ids` 会自动去重跨文件复制的 message-id。
+    fn discover_session_companions(&self, _path: &str) -> Vec<SessionMeta> {
+        Vec::new()
+    }
 }
 
 // ============================ 用量缓存（按文件 mtime 失效） ============================
@@ -264,7 +272,7 @@ pub fn agent_stats(
         p.last_modified = p.last_modified.max(s.modified);
 
         // 日活槽
-        let date = yyyymmdd_utc(s.modified);
+        let date = yyyymmdd_local(s.modified);
         let d = daily.entry(date.clone()).or_default();
         if d.date.is_empty() {
             d.date = date;

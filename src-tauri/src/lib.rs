@@ -16,6 +16,8 @@ pub mod agents;
 mod menu;
 pub mod stats;
 mod trash;
+#[cfg(target_os = "macos")]
+mod tray;
 mod types;
 mod util;
 mod watch;
@@ -480,6 +482,37 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 手动从 LiteLLM 上游拉一次模型价格表，覆盖本地 24h 缓存。前端 Settings
+/// 「立即刷新模型价格」按钮调用。返回入表条数；失败返回错误字符串（前端弹 toast）。
+///
+/// **必须是 async**：内部 `refresh_blocking` 走 `ureq::get(...).call()`，是真同步阻塞
+/// 调用，timeout 高达 20s。如果当 sync Tauri 命令直接跑，会霸占 webview 主线程，
+/// UI 一切动画 / 滚动 / 鼠标光标全冻 —— 用户反馈"点了刷新像卡死了"就是这个。
+/// 改成 async + `spawn_blocking` 后阻塞活路扔进 Tauri 的后台线程池，UI 线程立刻
+/// 返回继续跑 CSS 动画，等结果时 webview 仍然响应。
+#[tauri::command]
+async fn refresh_pricing() -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(stats::pricing::refresh_blocking)
+        .await
+        .map_err(|e| format!("join: {e}"))?
+}
+
+/// 价格表当前状态。前端按 `loaded` / `fetching` / `lastError` 决定渲染：
+///   - loaded=false && fetching=true → 显示加载占位
+///   - loaded=false && lastError=Some → 显示 error placeholder
+///   - loaded=true → 正常渲染（即使过期 cache 也先用着）
+#[tauri::command]
+fn pricing_status() -> stats::pricing::PricingStatus {
+    stats::pricing::status()
+}
+
+/// 返回当前价格表里 Claude / Codex / Gemini 三家的全部模型 —— 给 PricingView 弹窗渲染。
+/// 已按 family 分组、组内按 input 单价升序，前端可直接 group_by(family) 渲染。
+#[tauri::command]
+fn list_pricing() -> Vec<stats::pricing::PricingEntry> {
+    stats::pricing::list_for_ui()
+}
+
 /// Attach an empty `NSToolbar` with `unifiedCompact` style so AppKit grows the
 /// titlebar to ~40px and auto-centers the traffic lights vertically inside it
 /// — matching our 40px CSS topbar. This is the SUPPORTED AppKit way to extend
@@ -520,8 +553,21 @@ fn pin_traffic_lights(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+
+    // 开发期注入 MCP Bridge —— 让 AI 助手经 WebSocket 直接看/控这个 app（截图 /
+    // DOM 快照 / 执行 JS / 监控 IPC）。仅 debug：release 构建里这段被 cfg 去掉。
+    // 绑 127.0.0.1（默认是 0.0.0.0），避免把调试端口 9223 暴露到局域网。
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(
+            tauri_plugin_mcp_bridge::Builder::new()
+                .bind_address("127.0.0.1")
+                .build(),
+        );
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             list_projects,
             list_sessions,
@@ -546,8 +592,16 @@ pub fn run() {
             open_url,
             write_file,
             app_version,
+            refresh_pricing,
+            pricing_status,
+            list_pricing,
         ])
         .setup(|app| {
+            // 启动期后台拉一次 LiteLLM 模型价格表，新模型上架不必发版。
+            // 不阻塞 setup —— init() 自己 spawn 后台线程，离线 / 失败时 lookup 自动落回
+            // hardcoded 兜底表。
+            stats::pricing::init();
+
             // 原生应用菜单 —— 主要价值在 macOS 顶部菜单栏。
             // Windows / Linux 也会挂菜单，但视觉上不那么重要。
             menu::build(app.handle())?;
@@ -556,6 +610,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 use tauri::Manager;
+                // 菜单栏托盘图标 + 菜单（Show / Settings / Quit）。
+                tray::build(app.handle())?;
+
                 if let Some(win) = app.get_webview_window("main") {
                     pin_traffic_lights(&win);
                     // AppKit relays out standard window buttons on resize,
@@ -565,17 +622,34 @@ pub fn run() {
                     // can race the click→drag transition and break titlebar
                     // dragging when focusing the window from a click.
                     let win_clone = win.clone();
-                    win.on_window_event(move |e| {
-                        if matches!(e, tauri::WindowEvent::Resized(_)) {
-                            pin_traffic_lights(&win_clone);
+                    win.on_window_event(move |e| match e {
+                        tauri::WindowEvent::Resized(_) => pin_traffic_lights(&win_clone),
+                        // Close-to-tray：红灯 / ⌘W 不退出，藏到菜单栏，仍可从托盘
+                        // "Show" 唤回；真正退出走托盘 "Quit" 或 ⌘Q。
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            api.prevent_close();
+                            let _ = win_clone.hide();
                         }
+                        _ => {}
                     });
                 }
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // Dock 图标点击（macOS Reopen）：close-to-tray 把窗口藏起来后，点 Dock
+            // 图标应能唤回它，否则只能从托盘菜单 "Show"。
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                use tauri::Manager;
+                if let Some(win) = _app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

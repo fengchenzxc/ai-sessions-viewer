@@ -6,8 +6,14 @@
 //      stream 模块每处理 N 个文件就 emit 一次 partial 进度。
 //   2. 排序在 finalize() / snapshot() 里做（HashMap → 排序 Vec）；中间状态用 HashMap
 //      避免在每次累加时排序 N 次。
-//   3. 时间范围由调用方在喂入前过滤：聚合器只接受已经在窗口内的会话 —— 这样
-//      "Today / 7d / 30d / All" 的切换由 stream 层决定，aggregator 不关心。
+//   3. 时间范围 **per-turn** 过滤：构造时传入 `(lo_ms, hi_ms)` 窗口，feed_session
+//      逐 turn 检查 `turn.timestamp_ms`（缺失退回 session mtime），超窗的 turn 在
+//      所有维度（cost / calls / tokens / by_model / activities / daily 等）上一律不算。
+//      stream 层仍按 session.mtime 做粗筛 —— 只是优化（mtime 早于 lo 的 session 不必
+//      `read_turns`），并不替代真正的过滤判定。
+//      历史 bug：早期实现只有 stream 层的 mtime 过滤，没有 per-turn 过滤 ——
+//      "Today" 视图下，今天被摸过的 session 哪怕只加了一条新消息，整段历史
+//      （可能跨多周）的 cost / tokens / calls 都被算进 today 总数。
 //   4. cache_hit_rate：cache_read / (input + cache_read + cache_creation)；
 //      分母为 0 时返回 0。
 //
@@ -22,7 +28,7 @@ use crate::types::{
     ActivityStat, AgentStats, DailyActivity, ModelStat, NamedCount, ProjectStats, SessionStat,
     UsageSummary,
 };
-use crate::util::yyyymmdd_utc;
+use crate::util::yyyymmdd_local;
 
 /// 累加状态。HashMap-based 中间槽 —— `snapshot()` 时再排序成 Vec。
 #[derive(Default)]
@@ -54,6 +60,10 @@ pub struct Aggregator {
     /// 会话 fork / sub-agent JSONL 被多个文件复制；按 `message.id` 跳过避免
     /// cost / token 双倍计算。codeburn 用同名机制（`seenMsgIds`）。
     seen_message_ids: HashSet<String>,
+    /// Per-turn 时间窗口。`None` = 不限。turn.timestamp_ms 落在 [lo, hi] 之外时整段跳过。
+    /// stream 层会先按 session mtime 粗筛，这一层是终判。
+    lo_ms: Option<u64>,
+    hi_ms: Option<u64>,
 }
 
 /// 单个 session 喂入聚合器时需要的元数据。aggregator 不读文件，由 stream 层传入。
@@ -74,6 +84,30 @@ impl Aggregator {
         Self::default()
     }
 
+    /// 带时间窗口的聚合器（"Today" / "7d" / "30d" 走这条）。
+    /// `lo_ms` / `hi_ms` 是 unix 毫秒；任一为 None 表示该侧无界。
+    pub fn new_with_range(lo_ms: Option<u64>, hi_ms: Option<u64>) -> Self {
+        Self {
+            lo_ms,
+            hi_ms,
+            ..Self::default()
+        }
+    }
+
+    fn turn_in_window(&self, ts: u64) -> bool {
+        if let Some(l) = self.lo_ms {
+            if ts < l {
+                return false;
+            }
+        }
+        if let Some(h) = self.hi_ms {
+            if ts > h {
+                return false;
+            }
+        }
+        true
+    }
+
     /// 把一个 session 喂入聚合器：累积所有 turn / call 的统计。
     /// path 可以为空 —— 仅 Top Sessions 排行需要用到它打开会话。
     ///
@@ -91,6 +125,17 @@ impl Aggregator {
         let mut sess_cost: f64 = 0.0;
 
         for turn in feed.turns {
+            // 终判：turn 是否在窗口内。turn.timestamp_ms == 0 时退回 session mtime
+            // —— 老 JSONL / Gemini 早期格式可能没 timestamp，按 session 最后活跃日算。
+            let ts = if turn.timestamp_ms > 0 {
+                turn.timestamp_ms as u64
+            } else {
+                feed.last_modified
+            };
+            if !self.turn_in_window(ts) {
+                continue; // 整个 turn 在所有维度上都不算 —— cost / calls / tokens / by_X
+            }
+
             let mut turn_calls_kept: u64 = 0;
             let mut turn_cost: f64 = 0.0;
             let mut turn_usage = UsageSummary::default();
@@ -150,16 +195,9 @@ impl Aggregator {
                 act.call_count += turn_calls_kept;
                 act.cost_usd += turn_cost;
 
-                // 日活槽 —— 关键：按 turn 自己的时间戳分桶（codeburn 同样做法）。
-                // 早期实现按 session.last_modified 分桶，导致一个跨多天的 session
-                // 把全部 cost / calls 都堆到"最后修改那天"，跟 codeburn 差距巨大。
-                // turn.timestamp_ms == 0（未知）时退回 session mtime。
-                let ts = if turn.timestamp_ms > 0 {
-                    turn.timestamp_ms as u64
-                } else {
-                    feed.last_modified
-                };
-                let date = yyyymmdd_utc(ts);
+                // 日活槽 —— 按 turn 自己的时间戳分桶（codeburn 同样做法）。`ts` 已经
+                // 在外层算好并通过窗口判定，这里直接复用。
+                let date = yyyymmdd_local(ts);
                 let d = self.daily.entry(date.clone()).or_default();
                 if d.date.is_empty() {
                     d.date = date;
@@ -198,7 +236,7 @@ impl Aggregator {
 
         // 日活槽（session/message-级）：cost / calls / tokens 已经在上面 per-turn
         // 分桶完了；这里只补上 session-级别的标量（一个 session 算到它最后活跃那天）。
-        let date = yyyymmdd_utc(feed.last_modified);
+        let date = yyyymmdd_local(feed.last_modified);
         let d = self.daily.entry(date.clone()).or_default();
         if d.date.is_empty() {
             d.date = date;
@@ -368,6 +406,7 @@ mod tests {
 
     #[test]
     fn aggregates_top_level_counters() {
+        pricing::seed_test_prices();
         let usage = UsageSummary {
             input_tokens: 1_000_000,
             output_tokens: 500_000,
@@ -465,6 +504,7 @@ mod tests {
     fn daily_buckets_by_turn_timestamp_not_session_mtime() {
         // 回归：一个跨多天的 session 必须把 cost / calls / tokens 按每条 turn 自己的
         // 时间戳分桶（codeburn 同样做法），而不是全堆到 session.last_modified 那一天。
+        pricing::seed_test_prices();
         let usage = UsageSummary {
             input_tokens: 100,
             output_tokens: 50,
@@ -709,5 +749,97 @@ mod tests {
         assert!(s.daily_activity.is_empty());
         assert!(s.top_sessions.is_empty());
         assert_eq!(s.cache_hit_rate, 0.0);
+    }
+
+    #[test]
+    fn range_window_filters_per_turn_not_per_session() {
+        // 回归：用户截图的根因。一个 session 文件今天被摸过（mtime = today），
+        // 内含 3 个 turn：day 1（在窗外）、day 2（在窗外）、day 3（窗内）。
+        // 旧实现只在 stream 层按 mtime 粗筛 —— session 整段送进 aggregator，
+        // 三个 turn 的 cost / tokens 全算进 "Today" 总数。
+        // 修复后：构造时传 (lo, None)，aggregator 按 turn.timestamp_ms 终判，
+        // 窗外的 turn 在所有维度上都不算。
+        pricing::seed_test_prices();
+        let usage = UsageSummary {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        }
+        .finalize();
+        let mk = |ts_ms: i64, msg_id: &str| Turn {
+            user_message: "x".to_string(),
+            project_path: "/p".to_string(),
+            session_id: "s".to_string(),
+            calls: vec![CallRecord {
+                model: "claude-sonnet-4-6".to_string(),
+                message_id: Some(msg_id.to_string()),
+                usage,
+                cost_usd: pricing::cost_usd("claude-sonnet-4-6", &usage),
+                ..Default::default()
+            }],
+            timestamp_ms: ts_ms,
+        };
+        // Day 1/2/3 同 daily_buckets_by_turn_timestamp 那个测试的时间锚点
+        let turns = vec![
+            mk(1_704_110_400_000, "msg_a"), // 2024-01-01
+            mk(1_704_196_800_000, "msg_b"), // 2024-01-02
+            mk(1_704_283_200_000, "msg_c"), // 2024-01-03
+        ];
+        // 窗口：Day 3 起到无穷大（lo = day 3 00:00 UTC = 1_704_240_000_000）
+        let lo = 1_704_240_000_000_u64;
+        let mut agg = Aggregator::new_with_range(Some(lo), None);
+        // 喂进去 —— mtime = day 3，stream 层粗筛会通过
+        agg.feed_session(&feed(&turns, 1_704_283_200_000));
+        let s = agg.snapshot("all");
+
+        // 仅 day 3 那 1 个 turn 入账，不是 3 个
+        assert_eq!(s.call_count, 1, "只该数 day3 的 turn，window 内");
+        assert_eq!(s.session_count, 1);
+        assert_eq!(s.usage.input_tokens, 100, "只统计 day3 的 input");
+        assert_eq!(s.usage.output_tokens, 50);
+        // daily 只有 day 3 一条
+        assert_eq!(s.daily_activity.len(), 1);
+        assert_eq!(s.daily_activity[0].date, "2024-01-03");
+        // cost 跟 daily.day3 的 cost 应该相等 —— 顶部 KPI 必须 == daily 内窗内 cost 之和
+        assert!((s.cost_usd - s.daily_activity[0].cost_usd).abs() < 1e-9);
+        // By Model 也只该数 day3 的 1 个 call
+        assert_eq!(s.by_model.len(), 1);
+        assert_eq!(s.by_model[0].call_count, 1);
+    }
+
+    #[test]
+    fn range_window_drops_session_with_zero_in_window_turns() {
+        // session.mtime 落在窗内（被 stream 层放行），但所有 turn 都在窗外
+        // → session_count 不应被计入，projects / top_sessions 也不应出现。
+        pricing::seed_test_prices();
+        let usage = UsageSummary {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        }
+        .finalize();
+        let old_turn = Turn {
+            user_message: "x".to_string(),
+            project_path: "/p".to_string(),
+            session_id: "s".to_string(),
+            calls: vec![CallRecord {
+                model: "claude-sonnet-4-6".to_string(),
+                message_id: Some("only-msg".to_string()),
+                usage,
+                cost_usd: pricing::cost_usd("claude-sonnet-4-6", &usage),
+                ..Default::default()
+            }],
+            timestamp_ms: 1_704_110_400_000, // 2024-01-01
+        };
+        let lo = 1_704_240_000_000_u64; // 2024-01-03 起
+        let mut agg = Aggregator::new_with_range(Some(lo), None);
+        // mtime = day 3（stream 层放行），但唯一的 turn ts 是 day 1
+        agg.feed_session(&feed(std::slice::from_ref(&old_turn), 1_704_283_200_000));
+        let s = agg.snapshot("all");
+        assert_eq!(s.session_count, 0, "整段窗外 session 不计入");
+        assert_eq!(s.call_count, 0);
+        assert!(s.projects.is_empty());
+        assert!(s.top_sessions.is_empty());
+        assert_eq!(s.cost_usd, 0.0);
     }
 }

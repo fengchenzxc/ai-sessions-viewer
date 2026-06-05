@@ -129,6 +129,19 @@ pub fn yyyymmdd_utc(ms: u64) -> String {
     s.chars().take(10).collect()
 }
 
+/// 毫秒时间戳 → `YYYY-MM-DD`（用户所在时区）。统计窗口按本地日历日切的话，
+/// daily 热图也必须按本地日切，否则 "Today" 总额对得上 codeburn，但热图上
+/// 同一笔花费会被画到错误的格子里。
+pub fn yyyymmdd_local(ms: u64) -> String {
+    use chrono::{Local, TimeZone};
+    let secs = (ms / 1000) as i64;
+    let nsecs = ((ms % 1000) as u32) * 1_000_000;
+    match Local.timestamp_opt(secs, nsecs).single() {
+        Some(dt) => dt.format("%Y-%m-%d").to_string(),
+        None => yyyymmdd_utc(ms),
+    }
+}
+
 /// ISO-8601 → unix 毫秒。只解析 `YYYY-MM-DDTHH:MM:SS[.fff]Z` 这一形态；
 /// 其他形态退到 None（聚合器会用文件 mtime 兜底）。手写以免引 chrono。
 /// 给统计聚合器从 JSONL 时间戳串还原 unix ms 用。

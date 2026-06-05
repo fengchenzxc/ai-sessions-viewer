@@ -254,8 +254,18 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 /// build 之后调一次即可。
 pub fn install_bridges<R: Runtime>(app: &AppHandle<R>) {
     let app_for_menu = app.clone();
-    app.on_menu_event(move |_app, event: MenuEvent| {
+    app.on_menu_event(move |app_handle, event: MenuEvent| {
         let id = event.id().as_ref().to_string();
+        // 托盘菜单可能在主窗口被 close-to-tray 隐藏时点击 —— 先把窗口显示并聚焦，
+        // 否则点"设置"会在看不见的窗口里打开。主菜单点击时窗口本就可见，幂等无害。
+        if let Some(win) = app_handle.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+        // 托盘专属项：纯粹唤回窗口，无需派发给前端。
+        if id == "show-window" {
+            return;
+        }
         // 把 id 直接当 payload 派给前端；前端的 menu router 按 id 分发。
         let _ = app_for_menu.emit("menu://action", MenuActionPayload { id });
     });

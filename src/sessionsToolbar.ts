@@ -3,7 +3,7 @@
 // SessionsTopbar 住在 App.vue 的顶栏 slot 里、SessionsView 住在 main 区域，二者
 // 并不共享父模板。与 chatToolbar.ts / trashToolbar.ts 同理，这里用一个轻量模块
 // （refs + 纯函数）做胶水：
-//   - SessionsTopbar 写：sessionSearch / sessionSort / sessionWithIdOnly
+//   - SessionsTopbar 写：sessionSearch / sessionSort
 //   - SessionsView 读 filterSessions() 拿到过滤 + 排序后的列表
 // 切换项目时 App.vue 调 resetSessionsToolbar() 清状态；任一筛选被激活时
 // （sessionsFilterActive）App.vue 会一次性把整个项目的会话都加载进来，
@@ -19,8 +19,6 @@ export type SessionSort = 'recent' | 'oldest' | 'size' | 'messages'
 export const sessionSearch = ref('')
 /** 当前排序方式，默认与后端分页一致（时间最新在前）。 */
 export const sessionSort = ref<SessionSort>('recent')
-/** 仅显示带会话 ID 的条目。 */
-export const sessionWithIdOnly = ref(false)
 
 /** 批量选择模式开关（与回收站 trashToolbar 平行）。 */
 export const sessionSelectMode = ref(false)
@@ -31,8 +29,7 @@ export const selectedSessions = ref<Set<string>>(new Set())
 export const sessionsFilterActive = computed(
   () =>
     sessionSearch.value.trim().length > 0 ||
-    sessionSort.value !== 'recent' ||
-    sessionWithIdOnly.value,
+    sessionSort.value !== 'recent',
 )
 
 /** 勾选 / 取消勾选一个会话。整体替换 Set 以触发响应式更新。 */
@@ -53,20 +50,16 @@ export function exitSessionSelectMode() {
 export function resetSessionsToolbar() {
   sessionSearch.value = ''
   sessionSort.value = 'recent'
-  sessionWithIdOnly.value = false
   sessionSelectMode.value = false
   selectedSessions.value = new Set()
 }
 
-/** 应用 ID 筛选 + 排序。不再做关键词匹配 —— 关键词搜索现在走后端
+/** 应用排序。不再做关键词匹配 —— 关键词搜索现在走后端
  *  `searchSessions(projectKey)`，能命中会话标题 + 用户消息正文，而本地的元数据
  *  只够匹配 title / id 两列。读取模块 refs，故在 computed 里调用即响应式；
  *  返回新数组，不改动入参。体积 / 消息数排序在并列时回退到「时间最新」以保证稳定。 */
 export function filterSessions(sessions: SessionMeta[]): SessionMeta[] {
-  const out = sessions.filter((s) => {
-    if (sessionWithIdOnly.value && !s.id) return false
-    return true
-  })
+  const out = sessions.slice()
   const byRecent = (a: SessionMeta, b: SessionMeta) => b.modified - a.modified
   out.sort((a, b) => {
     switch (sessionSort.value) {

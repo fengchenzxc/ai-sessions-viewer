@@ -12,7 +12,9 @@ vi.mock('../src/api', () => ({ writeFile: writeFileMock }))
 
 import {
   batchExportFolderName,
+  buildExportEnvelope,
   exportHtml,
+  exportJson,
   exportMarkdown,
   messagesToHtml,
   messagesToMarkdown,
@@ -215,42 +217,42 @@ describe('messagesToMarkdown', () => {
 })
 
 describe('messagesToHtml', () => {
-  it('produces a full HTML document', () => {
-    const html = messagesToHtml(session(), [], 'claude')
+  it('produces a full HTML document', async () => {
+    const html = await messagesToHtml(session(), [], 'claude')
     expect(html.startsWith('<!doctype html>')).toBe(true)
     expect(html).toContain('<title>My Session</title>')
     expect(html).toContain('</html>')
   })
 
-  it('escapes HTML-significant characters in the title', () => {
-    const html = messagesToHtml(session({ title: '<script>' }), [], 'claude')
+  it('escapes HTML-significant characters in the title', async () => {
+    const html = await messagesToHtml(session({ title: '<script>' }), [], 'claude')
     expect(html).toContain('<title>&lt;script&gt;</title>')
   })
 
-  it('wraps a user message body in a collapsible box', () => {
-    const html = messagesToHtml(session(), [msg('user', [text('hi')])], 'claude')
+  it('wraps a user message body in a collapsible box', async () => {
+    const html = await messagesToHtml(session(), [msg('user', [text('hi')])], 'claude')
     expect(html).toContain('<div class="msg user">')
     expect(html).toContain('collapsible-box')
   })
 
-  it('converts newlines in assistant text to <br>', () => {
-    const html = messagesToHtml(session(), [msg('assistant', [text('a\nb')])], 'claude')
+  it('converts newlines in assistant text to <br>', async () => {
+    const html = await messagesToHtml(session(), [msg('assistant', [text('a\nb')])], 'claude')
     expect(html).toContain('a<br>b')
   })
 
-  it('renders a file-change result as an open <details>', () => {
+  it('renders a file-change result as an open <details>', async () => {
     const messages = [
       msg('assistant', [
         blk({ kind: 'tool_result', filePath: '/f.ts', text: 'patched' }),
       ]),
     ]
-    const html = messagesToHtml(session(), messages, 'claude')
+    const html = await messagesToHtml(session(), messages, 'claude')
     expect(html).toContain('<details open>')
     expect(html).toContain('<code>/f.ts</code>')
   })
 
-  it('renders a thinking block as a <details> element', () => {
-    const html = messagesToHtml(
+  it('renders a thinking block as a <details> element', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('assistant', [blk({ kind: 'thinking', text: 'reasoning' })])],
       'claude',
@@ -260,8 +262,8 @@ describe('messagesToHtml', () => {
     expect(html).toContain('reasoning')
   })
 
-  it('renders a tool_use with its arguments', () => {
-    const html = messagesToHtml(
+  it('renders a tool_use with its arguments', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('assistant', [blk({ kind: 'tool_use', toolName: 'Bash', toolInput: 'ls -la' })])],
       'claude',
@@ -271,17 +273,17 @@ describe('messagesToHtml', () => {
     expect(html).toContain('ls -la')
   })
 
-  it('inlines a non-file-mutating tool_result inside its tool_use', () => {
+  it('inlines a non-file-mutating tool_result inside its tool_use', async () => {
     const messages = [
       msg('assistant', [blk({ kind: 'tool_use', toolName: 'Read', toolId: 'r1', toolInput: '{}' })]),
       msg('user', [blk({ kind: 'tool_result', toolId: 'r1', text: 'file contents' })]),
     ]
-    const html = messagesToHtml(session(), messages, 'claude')
+    const html = await messagesToHtml(session(), messages, 'claude')
     expect(html).toContain('tool-result-inline')
     expect(html).toContain('file contents')
   })
 
-  it('renders a structured diff result with add/del rows', () => {
+  it('renders a structured diff result with add/del rows', async () => {
     const messages = [
       msg('assistant', [
         blk({
@@ -301,14 +303,14 @@ describe('messagesToHtml', () => {
         }),
       ]),
     ]
-    const html = messagesToHtml(session(), messages, 'claude')
+    const html = await messagesToHtml(session(), messages, 'claude')
     expect(html).toContain('<div class="diff">')
     expect(html).toContain('<span class="add">+new line</span>')
     expect(html).toContain('<span class="del">-old line</span>')
   })
 
-  it('marks a standalone error tool_result', () => {
-    const html = messagesToHtml(
+  it('marks a standalone error tool_result', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('assistant', [blk({ kind: 'tool_result', text: 'failure', isError: true })])],
       'claude',
@@ -317,26 +319,32 @@ describe('messagesToHtml', () => {
     expect(html).toContain('Tool result · error')
   })
 
-  it('labels a tool-only user message with the tool avatar', () => {
+  it('labels a tool-only user message with the tool avatar', async () => {
     const messages = [
       msg('assistant', [blk({ kind: 'tool_use', toolName: 'Write', toolId: 'w1', toolInput: '{}' })]),
       msg('user', [blk({ kind: 'tool_result', toolId: 'w1', filePath: '/a.ts', text: 'done' })]),
     ]
-    const html = messagesToHtml(session(), messages, 'claude')
+    const html = await messagesToHtml(session(), messages, 'claude')
     expect(html).toContain('<div class="msg tool">')
   })
 
-  it('renders an image as an <img> tag', () => {
-    const html = messagesToHtml(
+  it('renders an image as an <img> tag', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('user', [blk({ kind: 'image', imageSrc: 'data:x' })])],
       'claude',
     )
     expect(html).toContain('<img src="data:x"')
+    // 图片点击 → 同页 lightbox（不用 window.open，Chrome 拒绝顶层导航到 data:URL）。
+    expect(html).toContain('class="msg-image"')
+    expect(html).toMatch(/onclick="window\.__csvLightbox/)
+    // lightbox 容器 + runtime 入口在导出 HTML 里要存在。
+    expect(html).toContain('csv-lightbox')
+    expect(html).toContain('window.__csvLightbox = openLb')
   })
 
-  it('drops local-command-caveat messages', () => {
-    const html = messagesToHtml(
+  it('drops local-command-caveat messages', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('user', [text('<local-command-caveat>noise</local-command-caveat>')])],
       'claude',
@@ -344,8 +352,8 @@ describe('messagesToHtml', () => {
     expect(html).not.toContain('noise')
   })
 
-  it('renders a system event as a centered row', () => {
-    const html = messagesToHtml(
+  it('renders a system event as a centered row', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('user', [text('<system-reminder>The user named this session "X". y</system-reminder>')])],
       'claude',
@@ -353,14 +361,53 @@ describe('messagesToHtml', () => {
     expect(html).toContain('<div class="msg system">')
   })
 
-  it('reflects the active theme in the data-theme attribute', () => {
-    expect(messagesToHtml(session(), [], 'claude')).toContain('data-theme="light"')
+  it('reflects the active theme in the data-theme attribute', async () => {
+    expect(await messagesToHtml(session(), [], 'claude')).toContain('data-theme="light"')
     document.documentElement.classList.add('theme-dark')
-    expect(messagesToHtml(session(), [], 'claude')).toContain('data-theme="dark"')
+    expect(await messagesToHtml(session(), [], 'claude')).toContain('data-theme="dark"')
   })
 
-  it('uses the gemini avatar + label for assistant rows on gemini sessions', () => {
-    const html = messagesToHtml(
+  // 用户反馈：HTML 导出之前是裸 escapeHtml + <br>，markdown 元素全不渲染。
+  // 现在切到 renderText()，table / mermaid / inline 强调都要在导出里正确呈现。
+  it('renders markdown tables in HTML export', async () => {
+    const html = await messagesToHtml(
+      session(),
+      [msg('assistant', [text('| A | B |\n|---|---|\n| 1 | 2 |')])],
+      'claude',
+    )
+    expect(html).toContain('<div class="md-table-wrap">')
+    expect(html).toContain('<table class="md-table">')
+    expect(html).toContain('<th>A</th>')
+    expect(html).toContain('<td>2</td>')
+    // 原始 `|` 分隔符不应该泄漏
+    expect(html).not.toContain('| A | B |')
+  })
+
+  it('renders inline markdown (bold / inline code) in HTML export', async () => {
+    const html = await messagesToHtml(
+      session(),
+      [msg('assistant', [text('hello **world** with `code`')])],
+      'claude',
+    )
+    expect(html).toContain('<strong>world</strong>')
+    expect(html).toContain('<code>code</code>')
+  })
+
+  // mermaid prerender —— 不论成功（SVG）/ 失败（errmsg + 源码）/ mermaid 加载失败
+  // （留占位符），都不应该让 mermaid 块在导出 HTML 里彻底消失。最低保障：源码
+  // 字符串至少要出现在 HTML 里某处（rendered 节点里、error fallback 里、或原始占位符里）。
+  it('preserves mermaid blocks in HTML export (rendered or fallback)', async () => {
+    const html = await messagesToHtml(
+      session(),
+      [msg('assistant', [text('```mermaid\nNOTAVALIDGRAPH\n```')])],
+      'claude',
+    )
+    // 必有 md-mermaid 容器（class 或在 error / rendered 状态）
+    expect(/class="md-mermaid/.test(html)).toBe(true)
+  })
+
+  it('uses the gemini avatar + label for assistant rows on gemini sessions', async () => {
+    const html = await messagesToHtml(
       session(),
       [msg('assistant', [text('hi')])],
       'gemini',
@@ -398,6 +445,32 @@ describe('exportMarkdown / exportHtml', () => {
     const result = await exportHtml(session(), [], 'claude')
     expect(result).toBe('/Users/me/out.html')
     expect(writeFileMock).toHaveBeenCalledWith('/Users/me/out.html', expect.stringContaining('<!doctype html>'))
+  })
+
+  it('writes a lossless JSON envelope that round-trips agent + session + messages', async () => {
+    saveMock.mockResolvedValue('/Users/me/out.json')
+    writeFileMock.mockResolvedValue('/Users/me/out.json')
+    const msgs = [msg('user', [text('hi')]), msg('assistant', [text('yo')])]
+    const result = await exportJson(session(), msgs, 'codex')
+    expect(result).toBe('/Users/me/out.json')
+    const written = writeFileMock.mock.calls[0][1]
+    const parsed = JSON.parse(written)
+    expect(parsed.__type).toBe('cc-session-viewer-export')
+    expect(parsed.version).toBe(1)
+    expect(parsed.agent).toBe('codex')
+    expect(parsed.session.id).toBe('sess-1')
+    expect(parsed.messages).toHaveLength(2)
+    expect(parsed.messages[0].blocks[0].text).toBe('hi')
+  })
+})
+
+describe('buildExportEnvelope', () => {
+  it('tags the format and embeds the full payload', () => {
+    const env = JSON.parse(buildExportEnvelope(session(), [msg('user', [text('hi')])], 'gemini'))
+    expect(env.__type).toBe('cc-session-viewer-export')
+    expect(env.agent).toBe('gemini')
+    expect(env.session.title).toBe('My Session')
+    expect(env.messages[0].role).toBe('user')
   })
 
   it('sanitizes illegal characters out of the default filename', async () => {

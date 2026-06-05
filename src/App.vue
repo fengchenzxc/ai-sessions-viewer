@@ -27,13 +27,17 @@ import {
 import {
   exportMarkdown,
   exportHtml,
+  exportJson,
   exportMarkdownToDir,
   exportHtmlToDir,
+  exportJsonToDir,
   pickExportDir,
   batchExportFolderName,
+  type ExportKind,
 } from './export'
 import { fly } from './fly'
 import { recordRecent } from './recents'
+import { recordExport, type ExportRecord } from './exportHistory'
 import { globalSearchOpen, openGlobalSearch } from './globalSearch'
 import { runBackgroundCheck } from './updateCheck'
 import type { SearchHit } from './types'
@@ -46,6 +50,8 @@ import TrashView from './views/TrashView.vue'
 import SessionsView from './views/SessionsView.vue'
 import WelcomeView from './views/WelcomeView.vue'
 import StatsView from './views/StatsView.vue'
+import ExportHistoryView from './views/ExportHistoryView.vue'
+import PricingView from './views/PricingView.vue'
 import Sidebar from './components/Sidebar.vue'
 import SidebarTopbar from './components/SidebarTopbar.vue'
 import ConfirmModal from './modals/ConfirmModal.vue'
@@ -59,6 +65,8 @@ const projects = ref<ProjectInfo[]>([])
 const activeDir = ref<string | null>(null)
 const showTrash = ref(false)
 const showStats = ref(false)
+const showExportHistory = ref(false)
+const showPricing = ref(false)
 const showSettings = ref(false)
 const sidebarOpen = ref(true)
 const refreshing = ref(false)
@@ -456,6 +464,8 @@ function switchAgent(a: Agent) {
   sessions.value = []
   openSession.value = null
   showTrash.value = false
+  showExportHistory.value = false
+  showPricing.value = false
   // showStats 不重置 —— 统计是 agent-scoped，切 agent 后 StatsView 自己 refetch。
   loadProjects()
 }
@@ -477,6 +487,8 @@ async function selectProject(dir: string) {
   }
   showTrash.value = false
   showStats.value = false
+  showExportHistory.value = false
+  showPricing.value = false
   sessionStatsTarget.value = null
   activeDir.value = dir
   recordRecent(agent.value, dir)
@@ -583,6 +595,8 @@ function openStats() {
   // 全局统计模式：清掉单会话目标，避免上次留下来。
   sessionStatsTarget.value = null
   showTrash.value = false
+  showExportHistory.value = false
+  showPricing.value = false
   activeDir.value = null
   openSession.value = null
   sessions.value = []
@@ -592,6 +606,8 @@ function openStats() {
 async function loadTrash() {
   showTrash.value = true
   showStats.value = false
+  showExportHistory.value = false
+  showPricing.value = false
   sessionStatsTarget.value = null
   activeDir.value = null
   openSession.value = null
@@ -638,6 +654,74 @@ async function openChat(s: SessionMeta) {
   // ⚠️ 这里曾经会顺手拉一次 api.sessionUsage 给顶栏角标用。后端 session_usage
   // 会全文件再扫一次 JSONL，长会话下明显拖累聊天首屏 —— 已经移到独立的会话
   // 统计页面，由用户点 ChatTopbar 的「统计」按钮按需触发（流式推送）。
+}
+
+function openExportHistory() {
+  if (showExportHistory.value) {
+    showExportHistory.value = false
+    return
+  }
+  showExportHistory.value = true
+  showPricing.value = false
+  showTrash.value = false
+  showStats.value = false
+  sessionStatsTarget.value = null
+  activeDir.value = null
+  openSession.value = null
+  sessions.value = []
+  sessionTotal.value = 0
+}
+
+function openPricing() {
+  if (showPricing.value) {
+    showPricing.value = false
+    return
+  }
+  showPricing.value = true
+  showExportHistory.value = false
+  showTrash.value = false
+  showStats.value = false
+  sessionStatsTarget.value = null
+  activeDir.value = null
+  openSession.value = null
+  sessions.value = []
+  sessionTotal.value = 0
+}
+
+async function openHistorySession(rec: ExportRecord) {
+  const previousAgent = agent.value
+  agent.value = rec.agent
+  showExportHistory.value = false
+  showPricing.value = false
+  showTrash.value = false
+  showStats.value = false
+  sessionStatsTarget.value = null
+  activeDir.value = null
+  openTrashItem.value = null
+  const s: SessionMeta = {
+    id: rec.sessionId,
+    fileName: rec.path.split('/').pop() || rec.sessionId || 'session.jsonl',
+    path: rec.path,
+    title: rec.title,
+    cwd: rec.cwd,
+    modified: rec.exportedAt,
+    size: 0,
+    messageCount: 0,
+    codexAppListRank: null,
+    codexAppListScanned: 0,
+    codexAppFirstPageSize: 50,
+    codexAppFirstPagePosition: 0,
+    codexInternal: false,
+    codexArchived: false,
+  }
+  try {
+    if (previousAgent !== rec.agent) {
+      projects.value = await api.listProjects(rec.agent, sessionListOptions())
+    }
+    await openChat(s)
+  } catch (e) {
+    notify(t('toast.readFail', { e: String(e) }), true)
+  }
 }
 
 // 会话统计入口：从 ChatTopbar 的统计按钮触发，跳到独立统计页面。
@@ -890,10 +974,16 @@ function batchDeleteSessions() {
   })
 }
 
-// 批量导出：让用户挑一个目标目录，把勾选的会话一次性写成 MD / HTML 文件。
+// 批量导出：让用户挑一个目标目录，把勾选的会话一次性写成 MD / HTML / JSON 文件。
 // 失败项跳过，结尾给一个汇总 toast。逐个 readSession 是简单可控的做法
 // （会话数量本就不会很大），可以接受。
-async function batchExportSessions(kind: 'md' | 'html') {
+const exportToDirFn: Record<ExportKind, typeof exportMarkdownToDir> = {
+  md: exportMarkdownToDir,
+  html: exportHtmlToDir,
+  json: exportJsonToDir,
+}
+
+async function batchExportSessions(kind: ExportKind) {
   const keys = new Set(selectedSessions.value)
   const items = sessions.value.filter((s) => keys.has(s.path))
   if (!items.length) return
@@ -914,8 +1004,8 @@ async function batchExportSessions(kind: 'md' | 'html') {
   for (const s of items) {
     try {
       const msgs = await api.readSession(agent.value, s.path)
-      const fn = kind === 'md' ? exportMarkdownToDir : exportHtmlToDir
-      lastPath = await fn(s, msgs, agent.value, dir)
+      lastPath = await exportToDirFn[kind](s, msgs, agent.value, dir)
+      recordExport({ path: s.path, title: s.title, agent: agent.value, sessionId: s.id, cwd: s.cwd, exportedAt: Date.now() })
       ok++
     } catch {
       /* 跳过失败项，继续导出其余 */
@@ -958,13 +1048,26 @@ async function reveal(path: string) {
   }
 }
 
-async function exportSession(kind: 'md' | 'html') {
+const exportFn: Record<ExportKind, typeof exportMarkdown> = {
+  md: exportMarkdown,
+  html: exportHtml,
+  json: exportJson,
+}
+
+async function exportSession(kind: ExportKind) {
   if (!openSession.value) return
   try {
-    const fn = kind === 'md' ? exportMarkdown : exportHtml
-    const path = await fn(openSession.value, chatMsgs.value, agent.value)
+    const path = await exportFn[kind](openSession.value, chatMsgs.value, agent.value)
     // 用户在 Save As 对话框点了取消时返回 null —— 静默放弃
     if (!path) return
+    recordExport({
+      path: openSession.value.path,
+      title: openSession.value.title,
+      agent: chatAgent.value,
+      sessionId: openSession.value.id,
+      cwd: openSession.value.cwd,
+      exportedAt: Date.now(),
+    })
     notify(t('toast.exported', { path }))
     api.revealInFinder(path).catch(() => {})
   } catch (e) {
@@ -973,12 +1076,12 @@ async function exportSession(kind: 'md' | 'html') {
 }
 
 // 列表里直接导出某个会话：不打开会话，临时把消息读出来即可。
-async function exportFromList(s: SessionMeta, kind: 'md' | 'html') {
+async function exportFromList(s: SessionMeta, kind: ExportKind) {
   try {
     const msgs = await api.readSession(agent.value, s.path)
-    const fn = kind === 'md' ? exportMarkdown : exportHtml
-    const path = await fn(s, msgs, agent.value)
+    const path = await exportFn[kind](s, msgs, agent.value)
     if (!path) return
+    recordExport({ path: s.path, title: s.title, agent: agent.value, sessionId: s.id, cwd: s.cwd, exportedAt: Date.now() })
     notify(t('toast.exported', { path }))
     api.revealInFinder(path).catch(() => {})
   } catch (e) {
@@ -1240,11 +1343,15 @@ async function onGlobalSearchOpen(hit: SearchHit) {
         :refreshing="refreshing"
         :show-trash="showTrash"
         :show-stats="showStats"
+        :show-history="showExportHistory"
+        :show-pricing="showPricing"
         :has-trash="trash.length > 0"
         @toggle-sidebar="toggleSidebar"
         @refresh="refreshAll"
         @open-trash="loadTrash"
         @open-stats="openStats"
+        @open-history="openExportHistory"
+        @open-pricing="openPricing"
       />
       <!-- 顶栏右侧分发：每个页面把自己的工具栏组件挂这里。
            本身仍是 macOS 拖动区域，组件内部的可交互元素由 CSS 单独标 no-drag。 -->
@@ -1317,6 +1424,7 @@ async function onGlobalSearchOpen(hit: SearchHit) {
           @copy-id="copyText(openSession.id)"
           @export-md="exportSession('md')"
           @export-html="exportSession('html')"
+          @export-json="exportSession('json')"
           @restore="openTrashItem && restore(openTrashItem)"
         />
       </template>
@@ -1331,6 +1439,13 @@ async function onGlobalSearchOpen(hit: SearchHit) {
         @restore="restore"
         @permanent-delete="permanentDelete"
       />
+
+      <ExportHistoryView
+        v-else-if="showExportHistory"
+        @open="openHistorySession"
+      />
+
+      <PricingView v-else-if="showPricing" />
 
       <!-- 会话列表视图 -->
       <SessionsView

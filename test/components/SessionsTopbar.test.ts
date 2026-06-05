@@ -5,13 +5,15 @@ import { vTooltip } from '../../src/tooltip'
 import { setLang } from '../../src/settings'
 import {
   resetSessionsToolbar,
-  selectedSessions,
   sessionSearch,
-  sessionSelectMode,
   sessionSort,
-  sessionWithIdOnly,
 } from '../../src/sessionsToolbar'
 import type { SessionMeta } from '../../src/types'
+
+// Only the search bar + sort dropdown still live in the topbar; the with-id
+// filter, select-mode entry, and batch operations were moved into
+// SessionsView's body header (see `list-head-actions` in SessionsView.test.ts)
+// to reduce the "two parallel icon rows" density at the top of the window.
 
 beforeEach(() => {
   setLang('en')
@@ -69,23 +71,6 @@ describe('SessionsTopbar', () => {
     expect(sessionSort.value).toBe('size')
   })
 
-  it('toggles the with-id filter from the hash button', async () => {
-    const wrapper = factory()
-    expect(sessionWithIdOnly.value).toBe(false)
-    await wrapper.find('.ct-actions .ct-btn').trigger('click')
-    expect(sessionWithIdOnly.value).toBe(true)
-    await wrapper.find('.ct-actions .ct-btn').trigger('click')
-    expect(sessionWithIdOnly.value).toBe(false)
-  })
-
-  it('marks the with-id button active while the filter is on', async () => {
-    const wrapper = factory()
-    expect(wrapper.find('.ct-actions .ct-btn').classes()).not.toContain('active')
-    sessionWithIdOnly.value = true
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.ct-actions .ct-btn').classes()).toContain('active')
-  })
-
   it('focuses the search box on the ⌘F / Ctrl+F shortcut', () => {
     const wrapper = mount(SessionsTopbar, {
       props: { sessions: [session(), session({ path: '/p/b.jsonl' })] },
@@ -100,50 +85,8 @@ describe('SessionsTopbar', () => {
     wrapper.unmount()
   })
 
-  describe('select mode', () => {
-    it('shows the "select multiple" entry only when there are 2+ sessions', () => {
-      const w1 = factory([session()])
-      // Only the with-id hash button is rendered.
-      expect(w1.findAll('.ct-actions .ct-btn')).toHaveLength(1)
-      const w2 = factory()
-      expect(w2.findAll('.ct-actions .ct-btn')).toHaveLength(2)
-    })
-
-    it('flips into select mode from the entry button', async () => {
-      const wrapper = factory()
-      // The 2nd action button is the "select multiple" entry.
-      await wrapper.findAll('.ct-actions .ct-btn')[1].trigger('click')
-      expect(sessionSelectMode.value).toBe(true)
-    })
-
-    it('renders the count, select-all, export, delete and cancel controls', () => {
-      sessionSelectMode.value = true
-      selectedSessions.value = new Set(['/p/a.jsonl'])
-      const wrapper = factory()
-      expect(wrapper.find('.ct-search-count').text()).toBe('1 selected')
-      // Select-all + export + delete + cancel = 4 buttons.
-      expect(wrapper.findAll('.ct-actions > .ct-btn')).toHaveLength(3)
-      expect(wrapper.find('.export-menu-wrap .ct-btn').exists()).toBe(true)
-    })
-
-    it('emits batch-delete from the danger button', async () => {
-      sessionSelectMode.value = true
-      selectedSessions.value = new Set(['/p/a.jsonl'])
-      const wrapper = factory()
-      await wrapper.find('.ct-actions .ct-btn.danger').trigger('click')
-      expect(wrapper.emitted('batch-delete')).toHaveLength(1)
-    })
-
-    it('emits batch-export with the picked format', async () => {
-      sessionSelectMode.value = true
-      selectedSessions.value = new Set(['/p/a.jsonl'])
-      const wrapper = factory()
-      // Click the export menu trigger (3rd action button: select-all, export, delete).
-      await wrapper.find('.export-menu-wrap .ct-btn').trigger('click')
-      const items = wrapper.findAll('.export-menu-item')
-      expect(items).toHaveLength(2)
-      await items[1].trigger('click') // HTML
-      expect(wrapper.emitted('batch-export')).toEqual([['html']])
-    })
+  it('does not render the action bar — those controls live in SessionsView now', () => {
+    const wrapper = factory()
+    expect(wrapper.find('.ct-actions').exists()).toBe(false)
   })
 })

@@ -41,11 +41,14 @@ import IconUnfoldRaw from '~icons/lucide/chevrons-up-down'
 import IconDownloadRaw from '~icons/lucide/download'
 import IconMarkdownRaw from '~icons/lucide/file-text'
 import IconHtmlRaw from '~icons/lucide/file-code'
+import IconJsonRaw from '~icons/lucide/braces'
 import IconSortRaw from '~icons/lucide/arrow-down-up'
 import IconSelectRaw from '~icons/lucide/list-checks'
-import IconHashRaw from '~icons/lucide/hash'
 import IconPlusRaw from '~icons/lucide/plus'
 import IconHistoryRaw from '~icons/lucide/history'
+import IconExportHistoryRaw from '~icons/lucide/clock-arrow-down'
+import IconMoreRaw from '~icons/lucide/more-horizontal'
+import IconPriceTagRaw from '~icons/lucide/circle-dollar-sign'
 import IconGithubRaw from '~icons/lucide/github'
 import IconCornerDownLeftRaw from '~icons/lucide/corner-down-left'
 import IconChartRaw from '~icons/lucide/bar-chart-3'
@@ -98,11 +101,14 @@ export const IconUnfold = IconUnfoldRaw
 export const IconDownload = IconDownloadRaw
 export const IconMarkdown = IconMarkdownRaw
 export const IconHtml = IconHtmlRaw
+export const IconJson = IconJsonRaw
 export const IconSort = IconSortRaw
 export const IconSelect = IconSelectRaw
-export const IconHash = IconHashRaw
 export const IconPlus = IconPlusRaw
 export const IconHistory = IconHistoryRaw
+export const IconExportHistory = IconExportHistoryRaw
+export const IconMore = IconMoreRaw
+export const IconPriceTag = IconPriceTagRaw
 export const IconGithub = IconGithubRaw
 export const IconCornerDownLeft = IconCornerDownLeftRaw
 export const IconChart = IconChartRaw
@@ -132,10 +138,11 @@ export const IconPinFilled = defineComponent({
   },
 })
 
-// Brand marks for the two agents, pulled from iconify at build time so
-// runtime stays offline-friendly. Sources: `arcticons:claude` and
-// `arcticons:openai-chatgpt`. Re-exported individually for direct use
-// and aggregated into `agentIcons` for dispatch-by-agent.
+// Brand marks for the agents, pulled from iconify at build time so
+// runtime stays offline-friendly. Sources: `material-icon-theme:claude`,
+// `arcticons:openai-chatgpt`, and `material-icon-theme:gemini-ai`.
+// Re-exported individually for direct use and aggregated into `agentIcons`
+// for dispatch-by-agent.
 export const IconClaude = IconClaudeRaw
 export const IconCodex = IconCodexRaw
 export const IconGemini = IconGeminiRaw

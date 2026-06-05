@@ -84,11 +84,14 @@ export interface SearchHit {
   matchMsgUuid?: string
 }
 
-/** 单个会话的 token 用量；与 Rust 端 UsageSummary 同形。 */
+/** 单个会话的 token 用量；与 Rust 端 UsageSummary 同形。
+ *  `cacheCreation1hInputTokens` 是 `cacheCreationInputTokens` 的子集（1-hour tier），
+ *  cost 公式额外按 1× 5min 价位再算一遍（合计 2×），别在 UI 上把它加进 total。 */
 export interface UsageSummary {
   inputTokens: number
   outputTokens: number
   cacheCreationInputTokens: number
+  cacheCreation1hInputTokens: number
   cacheReadInputTokens: number
   reasoningOutputTokens: number
   total: number
@@ -158,7 +161,7 @@ export interface ActivityStat {
 export type StatsScope = 'all' | Agent
 
 /** 时间范围筛选。 */
-export type StatsRange = 'today' | 'days7' | 'days30' | 'all'
+export type StatsRange = 'today' | 'days7' | 'days30' | 'month' | 'months6'
 
 /** 流式统计的完整结果（与 Rust AgentStats 同形）。`scope` 标识维度。 */
 export interface AgentStats {

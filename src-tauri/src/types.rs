@@ -133,10 +133,14 @@ pub struct SearchHit {
 
 /// 一个会话的 token 用量汇总。三个 agent 用的字段名各不相同，这里统一抽象：
 ///   - `input_tokens` / `output_tokens` —— 新鲜进 / 出的 token
-///   - `cache_creation_input_tokens` —— 写入缓存（仅 Claude 有这个概念）
+///   - `cache_creation_input_tokens` —— 写入缓存（仅 Claude 有这个概念，含 5min + 1h 两档）
+///   - `cache_creation_1h_input_tokens` —— 上面那个之中属于 1-hour tier 的子集。
+///     Anthropic 1h cache write 单价 = 5min 的 2×，所以 cost 公式要单独再加一遍；
+///     这个字段是 `cache_creation_input_tokens` 的子集，不要双计 token 数（只在 cost 上加）。
 ///   - `cache_read_input_tokens` —— 从缓存读（Claude / Codex 都用，字段名不同）
 ///   - `reasoning_output_tokens` —— 推理 token（仅 Codex / 部分模型）
-///   - `total` —— 五项之和；前端通常只展示这一项，hover 展开看细分
+///   - `total` —— 五项之和；前端通常只展示这一项，hover 展开看细分。
+///     `cache_creation_1h_input_tokens` **不** 进 total，因为它已经被 `cache_creation_input_tokens` 包含。
 ///
 /// 任一字段缺失（agent 没记 / 该轮没产生）记 0，结构永远完整，不出 Optional。
 #[derive(Serialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +149,7 @@ pub struct UsageSummary {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_creation_input_tokens: u64,
+    pub cache_creation_1h_input_tokens: u64,
     pub cache_read_input_tokens: u64,
     pub reasoning_output_tokens: u64,
     pub total: u64,
@@ -152,6 +157,7 @@ pub struct UsageSummary {
 
 impl UsageSummary {
     /// 把 total 字段算上五项之和；构造完直接 `.finalize()` 一下即可，避免调用方各自累加。
+    /// `cache_creation_1h_input_tokens` 是 `cache_creation_input_tokens` 的子集，不进 total。
     pub fn finalize(mut self) -> Self {
         self.total = self.input_tokens
             + self.output_tokens
@@ -166,6 +172,7 @@ impl UsageSummary {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.cache_creation_input_tokens += other.cache_creation_input_tokens;
+        self.cache_creation_1h_input_tokens += other.cache_creation_1h_input_tokens;
         self.cache_read_input_tokens += other.cache_read_input_tokens;
         self.reasoning_output_tokens += other.reasoning_output_tokens;
         self.total += other.total;

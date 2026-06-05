@@ -13,13 +13,21 @@
 //   - **scope**：'all' = claude + codex + gemini 全部聚合；'claude' / 'codex' /
 //     'gemini' = 单 agent；'session:<path>:<agent>' = 单个 session（per-session
 //     统计页面用）。
-//   - **range**：'today' / 'days7' / 'days30' / 'all'。按文件 mtime 过滤；'today'
-//     用本地日，其余按 24h 滚动窗口。
+//   - **range**：'today' / 'days7' / 'days30' / 'month' / 'months6'。窗口按本地日历日切，
+//     和 codeburn / 各家 dashboard 一致 —— 「Today」= 本地 00:00:00 到现在，
+//     不是滚动 24h（滚动会把昨晚的长会话错算到今天的总成本里，曾经把数字
+//     放大 ~7x）。两层过滤：
+//     1. stream 层按 session.mtime 粗筛（mtime 早于窗口下界的 session 直接跳过
+//        read_turns —— 文件 mtime ≥ max(turn.timestamp_ms)，所以一定可以提前 skip）；
+//     2. aggregator 层 per-turn 终判：单个 turn.timestamp_ms 落在窗口外的，整个
+//        turn 在所有维度上（cost / calls / tokens / by_X / daily）都不算。
+//     单走第 1 层就有这个 bug：今天被摸过的老 session（resume / 续写一条），
+//     里头跨周的历史 turn 全被算进 today 总数。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
@@ -146,8 +154,10 @@ fn run_worker(
     }
     let total = pending.len();
 
-    // 起一个空快照让前端立刻渲染骨架 —— 不必等首个文件解析完。
-    let mut agg = Aggregator::new();
+    // 带 range 的聚合器：stream 这层按 session.mtime 做了粗筛（mtime < lo 的根本
+    // 不 read_turns），aggregator 这层再按 turn.timestamp_ms 做终判 —— 没有这一步，
+    // 今天被摸过的老 session 会把跨周的历史 turn 全算进 "Today" 总数。
+    let mut agg = Aggregator::new_with_range(lo_ms, hi_ms);
     emit_progress(app, request_id, 0, total, &agg, scope);
 
     let mut processed: usize = 0;
@@ -223,8 +233,15 @@ fn run_session_scope(
     let meta = meta.ok_or_else(|| format!("session not found: {path}"))?;
     let scope_label = format!("session:{agent_name}");
 
+    // 同伴文件 = Claude sub-agent JSONL（其它 agent 返回空）。把它们和 parent 一起
+    // 喂给同一个 Aggregator，让单会话视图跟全局 by-session 一致；共享的
+    // `seen_message_ids` 自动处理跨文件 message-id 复制。
+    let companions = src.discover_session_companions(path);
+    let total_steps = 1 + companions.len();
+
     let mut agg = Aggregator::new();
-    emit_progress(app, request_id, 0, 1, &agg, &scope_label);
+    emit_progress(app, request_id, 0, total_steps, &agg, &scope_label);
+
     let turns = src.read_turns(path).unwrap_or_default();
     agg.feed_session(&SessionFeed {
         agent: agent_name,
@@ -237,7 +254,23 @@ fn run_session_scope(
         message_count: meta.message_count,
         turns: &turns,
     });
-    emit_progress(app, request_id, 1, 1, &agg, &scope_label);
+    emit_progress(app, request_id, 1, total_steps, &agg, &scope_label);
+
+    for (i, companion) in companions.iter().enumerate() {
+        let c_turns = src.read_turns(&companion.path).unwrap_or_default();
+        agg.feed_session(&SessionFeed {
+            agent: agent_name,
+            project_dir_name: &project_dir,
+            project_display: &project_display,
+            session_id: &companion.id,
+            path: &companion.path,
+            title: &companion.title,
+            last_modified: companion.modified,
+            message_count: companion.message_count,
+            turns: &c_turns,
+        });
+        emit_progress(app, request_id, 2 + i, total_steps, &agg, &scope_label);
+    }
     Ok(agg.snapshot(&scope_label))
 }
 
@@ -262,17 +295,56 @@ fn emit_progress(
 }
 
 fn parse_range(range: &str) -> Result<(Option<u64>, Option<u64>), String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let day_ms: u64 = 86_400_000;
+    use chrono::{Datelike, Duration as CDuration, Local, Months, TimeZone};
+
+    // 「Today」= 本地 00:00:00（用户所在时区）。codeburn 也这么干 ——
+    // 滚动 24h 会把昨晚 23:50 的长会话错算进今天。
+    let now_local = Local::now();
+    let today_midnight = Local
+        .with_ymd_and_hms(
+            now_local.year(),
+            now_local.month(),
+            now_local.day(),
+            0,
+            0,
+            0,
+        )
+        .single()
+        .ok_or_else(|| "failed to resolve local midnight".to_string())?;
+    let to_ms = |t: chrono::DateTime<Local>| -> u64 {
+        let ts = t.timestamp_millis();
+        if ts < 0 {
+            0
+        } else {
+            ts as u64
+        }
+    };
     match range {
-        "all" => Ok((None, None)),
-        // 滚动 24h 窗口：足够用，避免引入本地时区
-        "today" => Ok((Some(now.saturating_sub(day_ms)), None)),
-        "days7" => Ok((Some(now.saturating_sub(7 * day_ms)), None)),
-        "days30" => Ok((Some(now.saturating_sub(30 * day_ms)), None)),
+        "today" => Ok((Some(to_ms(today_midnight)), None)),
+        // 「过去 7 天 / 30 天」= 包含今天在内、向前数 7 / 30 个完整日历日。
+        // 跟 Stripe / Linear / GitHub Insights 等仪表盘的口径一致。
+        // codeburn 自己写的是 `Date(y, m, day - 7)`，实际是 8 天窗口（label 是 mislabel），
+        // 我们不跟它。
+        "days7" => Ok((Some(to_ms(today_midnight - CDuration::days(6))), None)),
+        "days30" => Ok((Some(to_ms(today_midnight - CDuration::days(29))), None)),
+        // 「本月」= 本月 1 号 00:00 → 现在。**不是** 30 天滚动（月初的时候 30 天会
+        // 把上个月一大半算进来；codeburn 同样按日历月切）。
+        "month" => {
+            let month_start = Local
+                .with_ymd_and_hms(now_local.year(), now_local.month(), 1, 0, 0, 0)
+                .single()
+                .ok_or_else(|| "failed to resolve month start".to_string())?;
+            Ok((Some(to_ms(month_start)), None))
+        }
+        // 「过去 6 个月」—— 之前是 "all"（全部时间），但全盘扫描成本巨大且基本没
+        // 人真的关心 1 年前的数据。改成 6 个日历月：从本地午夜起向前减 6 个月
+        // （chrono::Months 处理月末越界，e.g. 8/31 - 6 个月 = 2/28）。
+        "months6" => {
+            let lo = today_midnight
+                .checked_sub_months(Months::new(6))
+                .ok_or_else(|| "failed to compute -6 months".to_string())?;
+            Ok((Some(to_ms(lo)), None))
+        }
         _ => Err(format!("unknown stats range: {range}")),
     }
 }
@@ -316,11 +388,35 @@ mod tests {
 
     #[test]
     fn parse_range_handles_known_values() {
-        assert_eq!(parse_range("all").unwrap(), (None, None));
         let (lo, hi) = parse_range("days7").unwrap();
         assert!(lo.is_some());
         assert!(hi.is_none());
+        let (lo6, hi6) = parse_range("months6").unwrap();
+        assert!(lo6.is_some(), "months6 must be bounded, not unbounded");
+        assert!(hi6.is_none());
         assert!(parse_range("nope").is_err());
+        // 之前的 "all" key 不再认 —— 旧 localStorage 值会回退到 settings 默认。
+        assert!(parse_range("all").is_err());
+    }
+
+    /// 「过去 6 个月」= 本地午夜 - 6 个日历月。之前是 "all"（全部时间），
+    /// 全盘扫太重而且基本没人关心一年前的数据。这里 pin 死语义：必须有 lo，
+    /// 上限敞开（= now），lo 落在 6 个月前的午夜。
+    #[test]
+    fn parse_range_months6_is_six_calendar_months_back_not_unbounded() {
+        use chrono::{Datelike, Local, Months, TimeZone};
+        let n = Local::now();
+        let midnight = Local
+            .with_ymd_and_hms(n.year(), n.month(), n.day(), 0, 0, 0)
+            .single()
+            .unwrap();
+        let expected = midnight
+            .checked_sub_months(Months::new(6))
+            .unwrap()
+            .timestamp_millis() as u64;
+        let (lo, hi) = parse_range("months6").unwrap();
+        assert_eq!(lo, Some(expected));
+        assert!(hi.is_none());
     }
 
     #[test]
@@ -328,5 +424,82 @@ mod tests {
         assert!(in_window(100, Some(50), None));
         assert!(!in_window(10, Some(50), None));
         assert!(in_window(100, None, None));
+    }
+
+    /// 「Today」必须切到本地日历日，而不是 `now - 86_400_000`（滚动 24h）。
+    /// 后者会把昨天后半夜的会话错算进今天，曾经让 KPI 比 codeburn 高 ~7x。
+    #[test]
+    fn parse_range_today_is_local_midnight_not_rolling_24h() {
+        use chrono::{Datelike, Local, TimeZone};
+        let n = Local::now();
+        let expected_midnight = Local
+            .with_ymd_and_hms(n.year(), n.month(), n.day(), 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        let (lo, hi) = parse_range("today").unwrap();
+        assert_eq!(
+            lo,
+            Some(expected_midnight),
+            "today.lo must be local midnight"
+        );
+        assert!(hi.is_none(), "today.hi must be open-ended (= now)");
+
+        // 滚动 24h 的 lo 永远 ≤ 本地午夜（除非你恰好在午夜调用）；只要不重合，
+        // 我们就证明实现切的是日历日，不是滚动窗口。
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let rolling = now_ms.saturating_sub(86_400_000);
+        if rolling != expected_midnight {
+            assert_ne!(lo, Some(rolling), "today.lo must NOT be rolling now-24h");
+        }
+    }
+
+    /// days7 / days30 按本地日切：days7.lo = 本地午夜 - 6 天（含今天共 7 天）。
+    /// Stripe / Linear / GitHub Insights 同口径。codeburn 自己写成 -7d / -30d
+    /// 实际是 8/31 天窗口（label 与实现脱节），我们不跟它。
+    #[test]
+    fn parse_range_week_and_month_use_calendar_boundaries() {
+        use chrono::{Datelike, Duration, Local, TimeZone};
+        let n = Local::now();
+        let midnight = Local
+            .with_ymd_and_hms(n.year(), n.month(), n.day(), 0, 0, 0)
+            .single()
+            .unwrap();
+        let (lo7, _) = parse_range("days7").unwrap();
+        let (lo30, _) = parse_range("days30").unwrap();
+        assert_eq!(
+            lo7,
+            Some((midnight - Duration::days(6)).timestamp_millis() as u64)
+        );
+        assert_eq!(
+            lo30,
+            Some((midnight - Duration::days(29)).timestamp_millis() as u64)
+        );
+    }
+
+    /// `month` = 本月 1 号 00:00 起 —— **不是** "过去 30 天滚动"。月初的时候
+    /// 滚动 30 天会把上个月一大半算进来，对账时跟 codeburn `month` 对不上。
+    #[test]
+    fn parse_range_month_is_first_of_current_month_not_rolling_30() {
+        use chrono::{Datelike, Local, TimeZone};
+        let n = Local::now();
+        let expected = Local
+            .with_ymd_and_hms(n.year(), n.month(), 1, 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        let (lo, hi) = parse_range("month").unwrap();
+        assert_eq!(lo, Some(expected));
+        assert!(hi.is_none());
+
+        // 跟 days30 不重合 —— 否则就是按 30 天滚动了。
+        let (lo30, _) = parse_range("days30").unwrap();
+        if n.day() != 1 {
+            // 月初 1 号那天才会重合，那天本来就两个都 = 今天。
+            assert_ne!(lo, lo30, "month must NOT equal days30 except on the 1st");
+        }
     }
 }

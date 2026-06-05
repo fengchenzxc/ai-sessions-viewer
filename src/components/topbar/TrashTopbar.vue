@@ -5,27 +5,21 @@ import { t } from '../../i18n'
 import { shortName } from '../../format'
 import {
   trashSearch,
-  trashSort,
   trashProject,
-  selectMode,
-  selectedTrash,
-  exitSelectMode,
-  filterTrash,
   trashProjects,
 } from '../../trashToolbar'
 import { useDebouncedSearch } from '../../useDebouncedSearch'
 import {
   IconSearch,
   IconClose,
-  IconSort,
-  IconSelect,
-  IconRestore,
   IconCheck,
   IconChevronDown,
 } from '../icons'
 
+// `.ct-actions` 原本住在这里（排序 / 批量选择 / 批量恢复 / 取消），现已挪到
+// TrashView 的 .list-head-actions 里，跟 Empty Trash 汇成一排，避免顶栏 +
+// body header 两层 icon-only 按钮在同一垂直线上视觉冲突。
 const props = defineProps<{ items: TrashItem[] }>()
-const emit = defineEmits<{ (e: 'batch-restore'): void }>()
 
 // 搜索防抖 + IME 组合保护：见 useDebouncedSearch 的注释。
 const {
@@ -38,31 +32,8 @@ const {
 const hasQuery = computed(() => searchDraft.value.length > 0)
 const projects = computed(() => trashProjects(props.items))
 
-// 当前筛选下可见的条目 —— 全选 / 计数都基于它。
-const visible = computed(() => filterTrash(props.items))
-// 选中数按「仍存在于回收站里的条目」算：单条恢复/删除后选择集合可能残留失效 key。
-const selectedCount = computed(
-  () => props.items.filter((it) => selectedTrash.value.has(it.trashFile)).length,
-)
-const allSelected = computed(
-  () =>
-    visible.value.length > 0 &&
-    visible.value.every((it) => selectedTrash.value.has(it.trashFile)),
-)
-
 function clearSearch() {
   commitSearch('')
-}
-function toggleSort() {
-  trashSort.value = trashSort.value === 'recent' ? 'oldest' : 'recent'
-}
-function toggleSelectAll() {
-  const next = new Set(selectedTrash.value)
-  for (const it of visible.value) {
-    if (allSelected.value) next.delete(it.trashFile)
-    else next.add(it.trashFile)
-  }
-  selectedTrash.value = next
 }
 
 // ⌘F / Ctrl+F：回收站打开时拦截系统 Find，聚焦搜索框并全选。
@@ -177,58 +148,6 @@ onUnmounted(() => {
       >
         <IconClose />
       </button>
-    </div>
-
-    <div class="ct-actions">
-      <template v-if="selectMode">
-        <span class="ct-search-count">{{
-          t('trash.tb.selectedCount', { n: selectedCount })
-        }}</span>
-        <button
-          class="ct-btn"
-          :class="{ active: allSelected }"
-          v-tooltip="allSelected ? t('trash.tb.selectNone') : t('trash.tb.selectAll')"
-          @click="toggleSelectAll"
-        >
-          <IconCheck />
-        </button>
-        <button
-          class="ct-btn"
-          :disabled="selectedCount === 0"
-          v-tooltip="t('trash.tb.restoreSelected')"
-          @click="emit('batch-restore')"
-        >
-          <IconRestore />
-        </button>
-        <button
-          class="ct-btn"
-          v-tooltip="t('trash.tb.selectCancel')"
-          @click="exitSelectMode"
-        >
-          <IconClose />
-        </button>
-      </template>
-      <!-- 排序与批量选择都只在 2 条以上才有意义，单条 / 空时不显示。 -->
-      <template v-else-if="items.length > 1">
-        <button
-          class="ct-btn"
-          v-tooltip="
-            trashSort === 'recent'
-              ? t('trash.tb.sortRecent')
-              : t('trash.tb.sortOldest')
-          "
-          @click="toggleSort"
-        >
-          <IconSort />
-        </button>
-        <button
-          class="ct-btn"
-          v-tooltip="t('trash.tb.select')"
-          @click="selectMode = true"
-        >
-          <IconSelect />
-        </button>
-      </template>
     </div>
   </div>
 </template>

@@ -10,6 +10,7 @@ import {
   sessionSelectMode,
   selectedSessions,
   toggleSessionSelected,
+  exitSessionSelectMode,
 } from '../sessionsToolbar'
 import { searchSessions, cancelSearch, nextSearchRequestId, sessionUsage } from '../api'
 import {
@@ -22,10 +23,13 @@ import {
   IconDownload,
   IconMarkdown,
   IconHtml,
+  IconJson,
   IconRefresh,
   IconCheck,
   IconSearch,
   IconPlus,
+  IconSelect,
+  IconClose,
 } from '../components/icons'
 
 const props = defineProps<{
@@ -44,12 +48,16 @@ const emit = defineEmits<{
   (e: 'reveal', path: string): void
   (e: 'delete', s: SessionMeta): void
   (e: 'copy', text: string): void
-  (e: 'export', s: SessionMeta, kind: 'md' | 'html'): void
+  (e: 'export', s: SessionMeta, kind: 'md' | 'html' | 'json'): void
   (e: 'refresh'): void
   (e: 'new-session'): void
   (e: 'delete-project'): void
   (e: 'load-more'): void
   (e: 'scroll', scrollTop: number): void
+  /** 批量删除：原本由 SessionsTopbar 触发，现已挪到 list-head 顶栏里。 */
+  (e: 'batch-delete'): void
+  /** 批量导出：同上。 */
+  (e: 'batch-export', kind: 'md' | 'html' | 'json'): void
 }>()
 
 const scrollEl = ref<HTMLElement>()
@@ -205,6 +213,47 @@ watch(
   },
 )
 
+// ---------- list-head 的批量选择 UI（原本住在 SessionsTopbar，挪过来减少
+// "topbar + list-head 两排 icon-only 按钮重叠" 的扫描负担）。
+// selectedCount / allSelected / toggleSelectAll 和原 SessionsTopbar 完全一致 ——
+// 状态都在 sessionsToolbar 模块里，topbar 和 view 任意一边写另一边都看得见。
+const headSelectedCount = computed(
+  () => props.sessions.filter((s) => selectedSessions.value.has(s.path)).length,
+)
+const headAllSelected = computed(
+  () =>
+    visibleSessions.value.length > 0 &&
+    visibleSessions.value.every((s) => selectedSessions.value.has(s.path)),
+)
+function headToggleSelectAll() {
+  const next = new Set(selectedSessions.value)
+  for (const s of visibleSessions.value) {
+    if (headAllSelected.value) next.delete(s.path)
+    else next.add(s.path)
+  }
+  selectedSessions.value = next
+}
+
+// 批量导出小弹层：与会话卡片自带的 export-menu 行为一致。
+const headExportMenuOpen = ref(false)
+const headExportMenuEl = ref<HTMLElement>()
+function toggleHeadExportMenu(e: Event) {
+  e.stopPropagation()
+  headExportMenuOpen.value = !headExportMenuOpen.value
+}
+function pickHeadExport(kind: 'md' | 'html' | 'json', e: Event) {
+  e.stopPropagation()
+  headExportMenuOpen.value = false
+  emit('batch-export', kind)
+}
+function onHeadDocClick(e: MouseEvent) {
+  if (!headExportMenuOpen.value) return
+  if (headExportMenuEl.value && headExportMenuEl.value.contains(e.target as Node)) return
+  headExportMenuOpen.value = false
+}
+onMounted(() => document.addEventListener('click', onHeadDocClick))
+onUnmounted(() => document.removeEventListener('click', onHeadDocClick))
+
 // 每张卡片自己的导出菜单状态：只允许一个打开，按 session path 标识。
 const openExportFor = ref<string | null>(null)
 const exportMenuEls = ref<Record<string, HTMLElement | null>>({})
@@ -215,7 +264,7 @@ function toggleExport(path: string, e: Event) {
   e.stopPropagation()
   openExportFor.value = openExportFor.value === path ? null : path
 }
-function pickExport(s: SessionMeta, kind: 'md' | 'html', e: Event) {
+function pickExport(s: SessionMeta, kind: 'md' | 'html' | 'json', e: Event) {
   e.stopPropagation()
   openExportFor.value = null
   emit('export', s, kind)
@@ -244,7 +293,7 @@ function idSegs(id: string) {
 }
 
 function codexRankLabel(s: SessionMeta): string {
-  if (props.agent !== 'codex' || !s.codexAppListScanned) return ''
+  if (!s.codexAppListScanned) return ''
   const firstPageSize = s.codexAppFirstPageSize || 50
   const position = s.codexAppFirstPagePosition || 0
   const rank = s.codexAppListRank || '-'
@@ -252,7 +301,6 @@ function codexRankLabel(s: SessionMeta): string {
 }
 
 function codexSpecialLabel(s: SessionMeta): string {
-  if (props.agent !== 'codex') return ''
   if (s.codexArchived) return t('list.codex.archived')
   if (s.codexInternal) return t('list.codex.internal')
   return ''
@@ -367,30 +415,116 @@ defineExpose({ scrollEl })
       </div>
     </div>
     <div class="list-head-actions">
-      <button
-        v-if="project.exists"
-        class="icon-btn"
-        v-tooltip="t('list.action.newSession')"
-        @click="emit('new-session')"
-      >
-        <IconPlus />
-      </button>
-      <button
-        v-if="project.exists"
-        class="icon-btn"
-        :disabled="loading"
-        v-tooltip="t('list.action.refresh')"
-        @click="emit('refresh')"
-      >
-        <IconRefresh />
-      </button>
-      <button
-        class="icon-btn danger"
-        v-tooltip="t('proj.delete')"
-        @click="emit('delete-project')"
-      >
-        <IconTrash />
-      </button>
+      <template v-if="sessionSelectMode">
+        <span class="ct-search-count">{{
+          t('list.tb.selectedCount', { n: headSelectedCount })
+        }}</span>
+        <!-- 选择控制：select-all + 取消选择。两个按钮挨着，跟下面的"对选中项的动作"
+             用 .list-head-divider 一条细竖线分开。 -->
+        <button
+          class="icon-btn"
+          :class="{ active: headAllSelected }"
+          v-tooltip="headAllSelected ? t('list.tb.selectNone') : t('list.tb.selectAll')"
+          @click="headToggleSelectAll"
+        >
+          <IconCheck />
+        </button>
+        <button
+          class="icon-btn"
+          v-tooltip="t('list.tb.selectCancel')"
+          @click="exitSessionSelectMode"
+        >
+          <IconClose />
+        </button>
+        <span class="list-head-divider" aria-hidden="true" />
+        <!-- 对选中项的动作：批量导出 + 批量删除。 -->
+        <div ref="headExportMenuEl" class="export-menu-wrap">
+          <button
+            class="icon-btn"
+            :class="{ active: headExportMenuOpen }"
+            :disabled="headSelectedCount === 0"
+            v-tooltip="t('list.tb.exportSelected')"
+            @click="toggleHeadExportMenu"
+          >
+            <IconDownload />
+          </button>
+          <div
+            v-if="headExportMenuOpen"
+            class="export-menu"
+            role="menu"
+            @click.stop
+          >
+            <button
+              class="export-menu-item"
+              role="menuitem"
+              @click.stop="pickHeadExport('md', $event)"
+            >
+              <IconMarkdown />
+              <span>{{ t('chat.tb.export.md') }}</span>
+            </button>
+            <button
+              class="export-menu-item"
+              role="menuitem"
+              @click.stop="pickHeadExport('html', $event)"
+            >
+              <IconHtml />
+              <span>{{ t('chat.tb.export.html') }}</span>
+            </button>
+            <button
+              class="export-menu-item"
+              role="menuitem"
+              @click.stop="pickHeadExport('json', $event)"
+            >
+              <IconJson />
+              <span>{{ t('chat.tb.export.json') }}</span>
+            </button>
+          </div>
+        </div>
+        <button
+          class="icon-btn danger"
+          :disabled="headSelectedCount === 0"
+          v-tooltip="t('list.tb.deleteSelected')"
+          @click="emit('batch-delete')"
+        >
+          <IconTrash />
+        </button>
+      </template>
+      <template v-else>
+        <!-- 进入批量模式 —— 原本住在 SessionsTopbar 的 .ct-actions 里，
+             跟下方 new/refresh/delete 隔一行 topbar 视觉冲突，挪到这里集中显示。 -->
+        <button
+          v-if="sessions.length > 1"
+          class="icon-btn"
+          v-tooltip="t('list.tb.select')"
+          @click="sessionSelectMode = true"
+        >
+          <IconSelect />
+        </button>
+        <button
+          v-if="project.exists"
+          class="icon-btn"
+          v-tooltip="t('list.action.newSession')"
+          @click="emit('new-session')"
+        >
+          <IconPlus />
+        </button>
+        <button
+          v-if="project.exists"
+          class="icon-btn"
+          :disabled="loading"
+          v-tooltip="t('list.action.refresh')"
+          @click="emit('refresh')"
+        >
+          <IconRefresh />
+        </button>
+        <button
+          class="icon-btn danger"
+          v-tooltip="t('proj.delete')"
+          @click="emit('delete-project')"
+        >
+          <IconTrash />
+        </button>
+      </template>
     </div>
   </div>
   <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
@@ -549,6 +683,14 @@ defineExpose({ scrollEl })
             >
               <IconHtml />
               <span>{{ t('chat.tb.export.html') }}</span>
+            </button>
+            <button
+              class="export-menu-item"
+              role="menuitem"
+              @click.stop="pickExport(s, 'json', $event)"
+            >
+              <IconJson />
+              <span>{{ t('chat.tb.export.json') }}</span>
             </button>
           </div>
         </div>

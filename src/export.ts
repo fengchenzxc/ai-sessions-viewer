@@ -9,7 +9,13 @@ import type { Msg, Block, SessionMeta, Agent, DiffHunk } from './types'
 import { writeFile } from './api'
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog'
 import { t } from './i18n'
-import { formatTime, isCaveatOnlyMsg, parseSystemEvent } from './format'
+import { formatTime, isCaveatOnlyMsg, parseSystemEvent, renderText } from './format'
+import {
+  highlightJsonInPlace,
+  looksLikeJson,
+  prettifyAndHighlightJson,
+} from './jsonHighlight'
+import { highlightDiff, looksLikeDiff } from './diffHighlight'
 
 function sanitizeFilename(name: string): string {
   const cleaned = name.replace(/[\\/:*?"<>|\n\r\t]/g, '_').trim()
@@ -377,6 +383,87 @@ h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 }
 .msg.user .role-tag { text-align: right; }
 .text { white-space: pre-wrap; word-break: break-word; }
+.text-run { white-space: pre-wrap; word-break: break-word; }
+.text-run h3 { font-size: 15px; font-weight: 600; margin: 14px 0 6px; }
+.text-run h4 { font-size: 13.5px; font-weight: 600; margin: 10px 0 4px; }
+/* renderText emit 的 fenced code 块。沿用上面 pre / code 的样式，class 留作钩子。 */
+.code-block { display: block; }
+/* GFM 表格 —— 行容器 .md-table-wrap 提供横向滚动；表格本身用 design tokens 上色。 */
+.md-table-wrap {
+  max-width: 100%; overflow-x: auto; margin: 10px 0;
+  border: 1px solid var(--border); border-radius: 8px;
+  -webkit-overflow-scrolling: touch;
+  /* 浅色模式下默认 native scrollbar 几乎是黑色，把 thumb 改成跟正文同色 22% 透明 */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent;
+}
+.md-table-wrap::-webkit-scrollbar { height: 7px; width: 7px; }
+.md-table-wrap::-webkit-scrollbar-track { background: transparent; }
+.md-table-wrap::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 999px;
+}
+.md-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 38%, transparent);
+}
+.md-table {
+  width: max-content; min-width: 100%;
+  border-collapse: separate; border-spacing: 0;
+  font-size: 13px; line-height: 1.5; background: var(--surface);
+}
+.md-table thead { background: var(--surface-2); }
+.md-table th, .md-table td {
+  padding: 7px 12px; text-align: left; vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+.md-table th { font-weight: 600; font-size: 12px; }
+.md-table tbody tr:last-child td { border-bottom: 0; }
+.md-table tbody tr:hover td { background: var(--surface-hover); }
+.md-table code { font-size: 12px; }
+/* Mermaid 流程图 —— 导出时已经 prerender 成 SVG 烤进 HTML，离线可看。
+ * 主题以导出时刻的 app 主题为准（mermaid SVG 颜色烤死），切换 HTML 主题时
+ * 其它元素跟着变，mermaid 图保持不变。 */
+.md-mermaid {
+  display: block; margin: 10px 0; padding: 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); overflow-x: auto; text-align: center;
+}
+.md-mermaid svg { max-width: 100%; height: auto; }
+.md-mermaid-source {
+  margin: 0; padding: 10px 12px; background: var(--code-bg);
+  border-radius: 6px; font-size: 12px; white-space: pre; overflow-x: auto;
+  text-align: left;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+.md-mermaid-error { border-color: hsl(0 70% 60% / 0.5); }
+.md-mermaid-errmsg {
+  font-size: 12px; color: hsl(0 70% 50%);
+  margin-bottom: 8px; text-align: left;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+.cmd-tag { background: var(--surface-hover); }
+/* JSON syntax highlight：tool_use args 与 JSON 形态的 tool_result。 */
+.lang-json .json-key { color: hsl(214 65% 42%); }
+.lang-json .json-string { color: hsl(140 50% 32%); }
+.lang-json .json-num { color: hsl(280 55% 45%); }
+.lang-json .json-bool { color: hsl(14 75% 45%); font-weight: 500; }
+.lang-json .json-null { color: var(--text-mute); font-style: italic; }
+:root[data-theme="dark"] .lang-json .json-key { color: hsl(214 80% 70%); }
+:root[data-theme="dark"] .lang-json .json-string { color: hsl(140 50% 65%); }
+:root[data-theme="dark"] .lang-json .json-num { color: hsl(280 70% 75%); }
+:root[data-theme="dark"] .lang-json .json-bool { color: hsl(14 75% 65%); }
+/* Unified diff syntax highlight：Bash 跑 git diff / 工具吐 patch 等文本形态 diff。
+   颜色复用 DiffBlock 的 add/del 语义，不画底色（避免和外层 pre 背景打架）。 */
+.lang-diff { display: block; }
+.lang-diff .diff-file { color: var(--text); font-weight: 600; }
+.lang-diff .diff-meta { color: var(--text-mute); }
+.lang-diff .diff-hunk { color: hsl(214 50% 45%); font-weight: 500; }
+.lang-diff .diff-add { color: hsl(140 55% 32%); background: color-mix(in srgb, hsl(140 55% 45%) 12%, transparent); display: block; }
+.lang-diff .diff-del { color: hsl(0 65% 42%); background: color-mix(in srgb, hsl(0 65% 50%) 12%, transparent); display: block; }
+.lang-diff .diff-ctx { color: var(--text); }
+:root[data-theme="dark"] .lang-diff .diff-hunk { color: hsl(214 70% 70%); }
+:root[data-theme="dark"] .lang-diff .diff-add { color: hsl(140 55% 70%); background: color-mix(in srgb, hsl(140 55% 50%) 18%, transparent); }
+:root[data-theme="dark"] .lang-diff .diff-del { color: hsl(0 70% 72%); background: color-mix(in srgb, hsl(0 70% 55%) 18%, transparent); }
 pre {
   background: var(--code-bg); padding: 12px 14px; border-radius: 8px;
   border: 1px solid var(--border);
@@ -407,6 +494,25 @@ details > summary::before {
 details[open] > summary::before { transform: rotate(90deg); }
 details[open] > summary { margin-bottom: 10px; }
 img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); }
+/* 图片可点击放大 —— 见 blockToHtml case 'image' 的 onclick + lightbox runtime。 */
+img.msg-image { cursor: zoom-in; }
+img.msg-image:hover { border-color: var(--border-strong); }
+/* Lightbox：fixed 覆盖层，不开就 display:none；img 居中且按视口尺寸限缩。 */
+.csv-lightbox {
+  position: fixed; inset: 0;
+  display: none;
+  align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.78);
+  z-index: 9999;
+  cursor: zoom-out;
+  padding: 32px;
+}
+.csv-lightbox.open { display: flex; }
+.csv-lightbox img {
+  max-width: 100%; max-height: 100%;
+  border-radius: 6px; border: none;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
 .diff {
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 12px;
@@ -581,6 +687,27 @@ function buildRuntimeScript(labels: {
     }, { passive: true });
     window.addEventListener('resize', updateEdges);
     updateEdges();
+
+    // ----- image lightbox -----
+    // 同页放大查看。data: URL 无法走 window.open（Chrome 阻断顶层导航到 data:），
+    // 改成 fixed 覆盖层。点遮罩 / 按 Esc 关闭。
+    var lb = document.createElement('div');
+    lb.id = 'csv-lightbox';
+    lb.className = 'csv-lightbox';
+    var lbImg = document.createElement('img');
+    lb.appendChild(lbImg);
+    document.body.appendChild(lb);
+    function closeLb() { lb.classList.remove('open'); lbImg.removeAttribute('src'); }
+    function openLb(src) {
+      if (!src) return;
+      lbImg.src = src;
+      lb.classList.add('open');
+    }
+    lb.addEventListener('click', closeLb);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && lb.classList.contains('open')) closeLb();
+    });
+    window.__csvLightbox = openLb;
   });
 })();
 `
@@ -607,7 +734,17 @@ function toolResultBodyHtml(b: Block): string {
   }
   const txt = b.text ?? ''
   if (!txt) return ''
-  return `<div class="collapsible-box" data-collapsible><pre>${escapeHtml(txt)}</pre></div>`
+  // 渲染优先级：unified diff（`git diff` / patch 文本）→ JSON → 原样。
+  // diff 必须先判，因为 JSON 文件的 diff 既像 diff 又像 JSON，应该按 diff 渲染。
+  let pre: string
+  if (looksLikeDiff(txt)) {
+    pre = `<pre class="lang-diff">${highlightDiff(txt)}</pre>`
+  } else if (looksLikeJson(txt)) {
+    pre = `<pre class="lang-json">${highlightJsonInPlace(txt)}</pre>`
+  } else {
+    pre = `<pre>${escapeHtml(txt)}</pre>`
+  }
+  return `<div class="collapsible-box" data-collapsible>${pre}</div>`
 }
 
 // tool.resultDiff = "File change · {file}" / "文件改动 · {file}". Split out the
@@ -634,13 +771,18 @@ function blockToHtml(
 ): string {
   switch (b.kind) {
     case 'text':
-      return `<div class="text">${escapeHtml(b.text ?? '').replace(/\n/g, '<br>')}</div>`
+      // 跟聊天界面一致：renderText() 给出表格 / fenced code / 行内强调 + 一个 mermaid
+      // 占位符（<div class="md-mermaid" data-source="..."/>）。占位符在 messagesToHtml
+      // 收尾阶段统一被 prerenderMermaidInHtml 替换成 SVG（一次性烤进 HTML，不依赖运行时 JS）。
+      return renderText(b.text ?? '')
     case 'thinking':
       return `<details><summary>🧠 ${escapeHtml(t('tool.thinking'))}</summary><pre>${escapeHtml(b.text ?? '')}</pre></details>`
     case 'tool_use': {
       const label = escapeHtml(t('tool.call', { name: b.toolName ?? '' }))
-      const args = escapeHtml(b.toolInput ?? '')
-      let inner = `<pre>${args}</pre>`
+      // Tool args 永远当 JSON 试 —— prettify + 上色；parse 失败也只是上 token 色，
+      // 总比裸 escapeHtml 强。
+      const args = prettifyAndHighlightJson(b.toolInput ?? '')
+      let inner = `<pre class="lang-json">${args}</pre>`
       if (b.toolId && ctx.inlinedIds.has(b.toolId)) {
         const r = ctx.resultByToolId.get(b.toolId)
         if (r) {
@@ -662,7 +804,13 @@ function blockToHtml(
         : `<details${open}><summary>${label}</summary></details>`
     }
     case 'image':
-      return b.imageSrc ? `<img src="${escapeHtml(b.imageSrc)}" alt="">` : ''
+      // 导出的 HTML 里图片默认按文本宽度缩放，看不清细节；点击 → 同页 lightbox
+      // 放大查看。原本用 window.open(this.src) 但 Chrome 拒绝从 window.open
+      // 顶层导航到 data: URL（数据 URL 是 base64 图片，被 Block 成 about:blank）。
+      // lightbox 在同页 fixed 覆盖，没有跨源 / 顶层导航问题。
+      return b.imageSrc
+        ? `<img src="${escapeHtml(b.imageSrc)}" alt="" class="msg-image" onclick="window.__csvLightbox&amp;&amp;window.__csvLightbox(this.src)">`
+        : ''
     default:
       return ''
   }
@@ -707,11 +855,67 @@ function currentTheme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('theme-dark') ? 'dark' : 'light'
 }
 
-export function messagesToHtml(
+/** 扫一遍 HTML 把 renderText 留下的 .md-mermaid 占位符替换成真 SVG。
+ *  让导出 HTML 完全离线可看（不依赖运行时 mermaid.js）。
+ *  - 一次性 dynamic-import mermaid；同一 source 二次出现复用上次的 SVG 不重画。
+ *  - 渲染失败：保留占位符 + 一行错误提示 + 源码，跟聊天里的兜底一致。
+ *  - 主题：用当前 app 的 theme（light/dark），SVG 颜色烤死；HTML 的 theme toggle 切
+ *    其它元素的色，mermaid SVG 保持不变（mermaid 不支持运行时切主题）。 */
+async function prerenderMermaidInHtml(html: string): Promise<string> {
+  // 没占位符就别动 mermaid，避免给纯文本会话加 600KB 的解析开销。
+  if (!html.includes('class="md-mermaid"')) return html
+  let mermaid: typeof import('mermaid').default
+  try {
+    mermaid = (await import('mermaid')).default
+  } catch (e) {
+    // 拉不到 mermaid（离线 / 安装损坏）—— 直接交回带占位符的 HTML，源码 fallback 还在。
+    console.warn('[export] mermaid load failed:', e)
+    return html
+  }
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    theme: currentTheme() === 'dark' ? 'dark' : 'default',
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+  })
+  const cache = new Map<string, { ok: true; svg: string } | { ok: false; err: string }>()
+  // \s\S 跨行匹配占位符里的 fallback <pre>；同一占位符 div 不嵌套，懒匹配安全。
+  const RE = /<div class="md-mermaid" data-source="([^"]*)">[\s\S]*?<\/div>/g
+  const sources = new Set<string>()
+  for (const m of html.matchAll(RE)) sources.add(m[1])
+  let counter = 0
+  for (const enc of sources) {
+    counter += 1
+    const src = decodeURIComponent(enc)
+    try {
+      const { svg } = await mermaid.render(`md-mermaid-export-${counter}`, src)
+      cache.set(enc, { ok: true, svg })
+    } catch (e) {
+      cache.set(enc, { ok: false, err: (e as Error)?.message ?? String(e) })
+    }
+  }
+  return html.replace(RE, (_, enc) => {
+    const hit = cache.get(enc)
+    const src = decodeURIComponent(enc)
+    if (!hit) return _
+    if (hit.ok) {
+      return `<div class="md-mermaid" data-rendered>${hit.svg}</div>`
+    }
+    return (
+      `<div class="md-mermaid md-mermaid-error" data-rendered>` +
+      `<div class="md-mermaid-errmsg">mermaid: ${escapeHtml(hit.err)}</div>` +
+      `<pre class="md-mermaid-source">${escapeHtml(src)}</pre>` +
+      `</div>`
+    )
+  })
+}
+
+export async function messagesToHtml(
   session: SessionMeta,
   messages: Msg[],
   agent: Agent,
-): string {
+): Promise<string> {
   const title = escapeHtml(session.title)
   const { u, a } = computeStats(messages)
   const statsLine = escapeHtml(
@@ -730,11 +934,14 @@ export function messagesToHtml(
     .filter(Boolean)
     .join(' &middot; ')
   const ctx = buildInlinedResults(messages)
-  const body = messages
+  // 先生成 raw body（含 .md-mermaid 占位符），再一次性烤 SVG 进去。
+  // 收尾才烤可以让多个 mermaid 块共用同一个 mermaid runtime 初始化。
+  const rawBody = messages
     .filter((m) => !isCaveatOnlyMsg(m))
     .map((m) => msgToHtml(m, agent, ctx))
     .filter(Boolean)
     .join('\n')
+  const body = await prerenderMermaidInHtml(rawBody)
   const theme = currentTheme()
   const themeLight = t('export.theme.light')
   const themeDark = t('export.theme.dark')
@@ -777,18 +984,39 @@ ${body}
 // 弹原生 Save As 让用户选位置，再写盘。返回最终路径以便提示/打开访达。
 // 用户取消对话框时返回 null（调用方据此跳过 toast 与 reveal）。
 
+export type ExportKind = 'md' | 'html' | 'json'
+
+const EXPORT_FILTERS: Record<ExportKind, { name: string; extensions: string[] }> = {
+  md: { name: 'Markdown', extensions: ['md'] },
+  html: { name: 'HTML', extensions: ['html'] },
+  json: { name: 'JSON', extensions: ['json'] },
+}
+
 async function pickAndWrite(
   content: string,
   defaultName: string,
-  kind: 'md' | 'html',
+  kind: ExportKind,
 ): Promise<string | null> {
-  const filters =
-    kind === 'md'
-      ? [{ name: 'Markdown', extensions: ['md'] }]
-      : [{ name: 'HTML', extensions: ['html'] }]
-  const chosen = await saveDialog({ defaultPath: defaultName, filters })
+  const chosen = await saveDialog({
+    defaultPath: defaultName,
+    filters: [EXPORT_FILTERS[kind]],
+  })
   if (!chosen) return null
   return writeFile(chosen, content)
+}
+
+/** 无损 JSON 导出的信封：自包含（带 messages），可在任意机器上重新导入还原。
+ *  `__type` 是导入端识别本格式的标记；`version` 留给以后格式演进。 */
+export function buildExportEnvelope(
+  session: SessionMeta,
+  messages: Msg[],
+  agent: Agent,
+): string {
+  return JSON.stringify(
+    { __type: 'cc-session-viewer-export', version: 1, agent, session, messages },
+    null,
+    2,
+  )
 }
 
 export function exportMarkdown(
@@ -800,13 +1028,22 @@ export function exportMarkdown(
   return pickAndWrite(md, `${sanitizeFilename(session.title)}.md`, 'md')
 }
 
-export function exportHtml(
+export async function exportHtml(
   session: SessionMeta,
   messages: Msg[],
   agent: Agent,
 ): Promise<string | null> {
-  const html = messagesToHtml(session, messages, agent)
+  const html = await messagesToHtml(session, messages, agent)
   return pickAndWrite(html, `${sanitizeFilename(session.title)}.html`, 'html')
+}
+
+export function exportJson(
+  session: SessionMeta,
+  messages: Msg[],
+  agent: Agent,
+): Promise<string | null> {
+  const json = buildExportEnvelope(session, messages, agent)
+  return pickAndWrite(json, `${sanitizeFilename(session.title)}.json`, 'json')
 }
 
 // ============================ 批量导出 ============================
@@ -823,14 +1060,14 @@ export async function pickExportDir(): Promise<string | null> {
 /** 批量导出的子目录名：`export-YYYYMMDD-HHMMSS-<md|html>`。
  *  本地时间，便于人在 Finder 里直观分辨；多次导出不会撞名。
  *  `now` 形参只用于测试；生产路径走默认值 `new Date()`。 */
-export function batchExportFolderName(kind: 'md' | 'html', now: Date = new Date()): string {
+export function batchExportFolderName(kind: ExportKind, now: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   const dt = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
   return `export-${dt}-${kind}`
 }
 
 /** 文件名：`<sanitized-title>-<id8>.<ext>`；标题相同的两条会话不会互相覆盖。 */
-function batchFileName(session: SessionMeta, ext: 'md' | 'html'): string {
+function batchFileName(session: SessionMeta, ext: ExportKind): string {
   const title = sanitizeFilename(session.title)
   const tag = (session.id || '').slice(0, 8) || 'session'
   return `${title}-${tag}.${ext}`
@@ -854,6 +1091,17 @@ export async function exportHtmlToDir(
   agent: Agent,
   dir: string,
 ): Promise<string> {
-  const html = messagesToHtml(session, messages, agent)
+  const html = await messagesToHtml(session, messages, agent)
   return writeFile(`${dir}/${batchFileName(session, 'html')}`, html)
+}
+
+/** 把一条会话以无损 JSON 写到目录里，返回最终绝对路径。 */
+export async function exportJsonToDir(
+  session: SessionMeta,
+  messages: Msg[],
+  agent: Agent,
+  dir: string,
+): Promise<string> {
+  const json = buildExportEnvelope(session, messages, agent)
+  return writeFile(`${dir}/${batchFileName(session, 'json')}`, json)
 }

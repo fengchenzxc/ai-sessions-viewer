@@ -24,6 +24,7 @@ import {
 } from '../components/icons'
 import { useStatsStream } from '../stats'
 import { statsRange, statsScope } from '../settings'
+import { forceRefresh as forceRefreshPricing, pricingStatus, refreshStatus as refreshPricingStatus, watchUntilReady as watchPricingUntilReady } from '../pricing'
 import StatsDailyChart from '../components/StatsDailyChart.vue'
 import StatsModelChart from '../components/StatsModelChart.vue'
 import StatsActivityChart from '../components/StatsActivityChart.vue'
@@ -61,7 +62,8 @@ const RANGES: { value: StatsRange; key: string }[] = [
   { value: 'today', key: 'stats.range.today' },
   { value: 'days7', key: 'stats.range.days7' },
   { value: 'days30', key: 'stats.range.days30' },
-  { value: 'all', key: 'stats.range.all' },
+  { value: 'month', key: 'stats.range.month' },
+  { value: 'months6', key: 'stats.range.months6' },
 ]
 
 const stream = useStatsStream()
@@ -85,7 +87,25 @@ onMounted(() => {
   // scope 保持组件内部状态：默认 'all'，不跟随侧栏当前 agent 走 ——
   // 统计页是「全局视角」，用户在这里自己决定看哪个 agent。
   refresh()
+  // 价格表（LiteLLM 上游）—— 启动期可能还在拉。先读一次状态，没就绪就开 poll。
+  refreshPricingStatus().then(() => watchPricingUntilReady())
 })
+
+const pricingReady = computed(() => pricingStatus.value.loaded)
+const pricingErrored = computed(
+  () => !pricingStatus.value.loaded && !!pricingStatus.value.lastError,
+)
+const pricingLoading = computed(
+  () => !pricingStatus.value.loaded && !pricingStatus.value.lastError,
+)
+
+async function retryPricing() {
+  try {
+    await forceRefreshPricing()
+  } catch {
+    // forceRefresh 内部已 refreshStatus，error 已落进 pricingStatus.lastError
+  }
+}
 
 // 注意：props.agent（侧栏当前 agent）刻意不 watch —— 用户在侧栏切 agent
 // 不应该悄悄改写本页面的 scope，否则 pill 看似"自己跳动"。
@@ -104,11 +124,11 @@ watch(
 
 // ---------- 数字格式化 ------------------------------------------------------
 function fmtUsd(n: number): string {
+  // 不要做 ≥$10 一刀切舍到整数 / ≥$1000 转 K 的事 —— 跟 codeburn / 任何
+  // 财务面板对账时 `$38.55` 显示成 `$39` 会让人怀疑算法。统一 2 位小数。
   if (!Number.isFinite(n) || n === 0) return '$0.00'
   if (n < 0.01) return '<$0.01'
-  if (n < 10) return `$${n.toFixed(2)}`
-  if (n < 1000) return `$${n.toFixed(0)}`
-  return `$${(n / 1000).toFixed(1)}K`
+  return `$${n.toFixed(2)}`
 }
 function pct(n: number): string {
   if (!Number.isFinite(n) || n === 0) return '0%'
@@ -258,7 +278,8 @@ function asAgent(name: string): Agent {
     </div>
 
     <!-- Hero 顶栏：scope/range 标签 + 4 个 KPI 卡片（cost / calls / sessions / cache hit）+ 副 token 行 -->
-    <div class="stats-hero" v-if="headerLine">
+    <!-- 价格表没就绪时不渲染 hero —— hero 里那一坨 cost 都是 0，避免歧义。 -->
+    <div class="stats-hero" v-if="headerLine && pricingReady">
       <div class="stats-hero-row">
         <template v-if="isSession">
           <span class="stats-hero-scope">{{ props.session?.title || t('stats.sessionTitle') }}</span>
@@ -315,8 +336,23 @@ function asAgent(name: string): Agent {
       </div>
     </div>
 
-    <!-- 错误 -->
-    <div v-if="stage === 'error'" class="stats-empty error">
+    <!-- 价格表加载失败 —— 优先级最高：没有价格 cost 全是 0，stats 没意义。
+         一行说明 + 一个 Retry 按钮（调 refresh_pricing Tauri 命令重拉一次）。 -->
+    <div v-if="pricingErrored" class="stats-empty error">
+      <div>{{ t('stats.pricing.error') }}</div>
+      <button class="btn" style="margin-top: 12px" @click="retryPricing">
+        {{ t('stats.pricing.retry') }}
+      </button>
+    </div>
+
+    <!-- 价格表还在拉（启动期 / 用户点过 Retry）—— 复用 scan loading 视觉 -->
+    <div v-else-if="pricingLoading" class="stats-empty">
+      <div class="big"><StatsLoadingIcon /></div>
+      <div class="stats-loading-dots">{{ t('stats.pricing.loading').replace(/[.…]+$/, '') }}</div>
+    </div>
+
+    <!-- 扫描错误 -->
+    <div v-else-if="stage === 'error'" class="stats-empty error">
       <div>{{ t('stats.error', { e: error }) }}</div>
     </div>
 

@@ -17,7 +17,9 @@ afterEach(() => {
 
 describe('chatToolbar refs', () => {
   it('start at their documented defaults', () => {
-    expect(toolsCollapsed.value).toBe(false)
+    // toolsCollapsed 默认 true：跟 <details> 初始 DOM（关闭）对齐，
+    // 否则首次点"展开"按钮要点两下才动作（见 chatToolbar.ts 注释）。
+    expect(toolsCollapsed.value).toBe(true)
     expect(search.value).toBe('')
     expect(searchScope.value).toBe('all')
     expect(searchCount.value).toBe(0)
@@ -27,7 +29,7 @@ describe('chatToolbar refs', () => {
 
 describe('resetChatToolbar', () => {
   it('zeroes every piece of search/collapse state', () => {
-    toolsCollapsed.value = true
+    toolsCollapsed.value = false
     search.value = 'needle'
     searchScope.value = 'agent'
     searchCount.value = 7
@@ -35,7 +37,8 @@ describe('resetChatToolbar', () => {
 
     resetChatToolbar()
 
-    expect(toolsCollapsed.value).toBe(false)
+    // 重置回 true（折叠态），跟新会话进入时 <details> 默认关闭的 DOM 状态对齐。
+    expect(toolsCollapsed.value).toBe(true)
     expect(search.value).toBe('')
     expect(searchScope.value).toBe('all')
     expect(searchCount.value).toBe(0)

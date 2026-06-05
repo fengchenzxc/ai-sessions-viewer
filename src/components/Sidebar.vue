@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { Agent, ProjectInfo } from '../types'
 import { shortName } from '../format'
 import { t } from '../i18n'
-import { IconExternalLink, IconSettings, agentIcons } from './icons'
+import { IconExternalLink, IconRefresh, IconSettings, agentIcons } from './icons'
 import { latestVersion, openReleasePage, updateAvailable } from '../updateCheck'
 
 type ProjState = 'pinned' | 'sunk'
@@ -14,6 +14,7 @@ const props = defineProps<{
   activeDir: string | null
   showTrash: boolean
   projPrefs: Record<string, ProjState>
+  refreshing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   (e: 'select-project', dir: string): void
   (e: 'context-menu', evt: MouseEvent, p: ProjectInfo): void
   (e: 'open-settings'): void
+  (e: 'refresh'): void
 }>()
 
 const agents: Agent[] = ['claude', 'codex', 'gemini']
@@ -65,8 +67,23 @@ function pinColor(p: ProjectInfo): string {
         </button>
       </div>
       <div class="sidebar-sub">
-        {{ agentName }} ·
-        {{ t('sidebar.projectsCount', { count: projects.length }) }}
+        <span class="sidebar-sub-label">
+          {{ agentName }} ·
+          {{ t('sidebar.projectsCount', { count: projects.length }) }}
+        </span>
+        <!-- 刷新按钮：只重拉当前 agent 的项目 / 会话 / 当前打开的对话。
+             之前挂在顶部 SidebarTopbar 上离 agent switch 较远，挪到这里
+             跟 "{agent} · N projects" 同行，"刷新这家 agent" 的语义更直观。 -->
+        <button
+          type="button"
+          class="sidebar-sub-refresh"
+          :class="{ spinning: refreshing }"
+          v-tooltip="t('sidebar.refresh')"
+          :disabled="refreshing"
+          @click="emit('refresh')"
+        >
+          <IconRefresh />
+        </button>
       </div>
     </div>
 

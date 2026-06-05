@@ -881,10 +881,8 @@ impl SessionSource for CodexSource {
             .take(limit)
             .map(|(p, m, _, flags)| scan(p, m, &title_index, *flags))
             .collect();
-        if limit != usize::MAX {
-            let snapshot = query_codex_app_thread_list();
-            apply_codex_app_list_snapshot(&mut sessions, &snapshot);
-        }
+        let snapshot = query_codex_app_thread_list();
+        apply_codex_app_list_snapshot(&mut sessions, &snapshot);
         Ok(SessionPage { total, sessions })
     }
 
@@ -1037,21 +1035,26 @@ impl SessionSource for CodexSource {
 
 // ---- read_turns（统计聚合用）---------------------------------------------
 //
-// Codex 的 JSONL 单遍：
+// Codex 的 JSONL 单遍。这里关键约定 —— **一次 OpenAI API 调用 = 一个 `token_count` 事件**
+// （和 codeburn / 任何官方账单维度一致）。`response_item.function_call` /
+// `custom_tool_call` / `web_search_call`、`event_msg.agent_message` 都是同一次 API
+// 响应里返回的 content block，并不是各自独立计费；旧版把每个都算一次 call，
+// 对 Today 这种长跑 codex 会话能把 calls 放大到 ~3x（典型例子：49 个真实
+// token_count 事件被算成 143 次 call，cost 因为我们已经把累积 usage 灌到最后一个
+// CallRecord，反而是对的；但 calls/turns/By Activity 全错位）。
+//
+// 流程：
 //   - 起 turn：`event_msg.user_message` —— message 是干净文本
-//   - 起 call：assistant 这边没有"单一消息"概念，每个 `response_item.function_call`
-//     / `custom_tool_call` / `web_search_call` 都算一次工具调用；`event_msg.agent_message`
-//     的纯文本回复也单独算一次 call（model 取最近 turn_context.payload.model）。
+//   - 起 / 接 call：每读到一个 token_count，把自上次 token_count 以来累积的
+//     pending 工具（function_call / web_search_call / patch_apply_end 等）合并到一条
+//     **新的** CallRecord 里，per-event 算 token / cost 再 push 到当前 turn
 //   - model：来源是 `turn_context` 事件的 `payload.model`（mid-session 可能切换，譬如
 //     gpt-5.5 / gpt-5.3-codex，每次出现就更新 `model_hint`）。
 //     旧 `session_meta` 里**没有** model 字段（`originator` 是 "codex-tui" 这种字符串），
 //     所以历史代码全部走 fallback 拿到空串，导致 pricing 算出 $0 —— 这里必须读 turn_context。
-//   - usage：codex 把整段对话的 token 累积总数写在 `event_msg.token_count.info.total_token_usage`，
-//     每次更新都是累积值。读到最后一行后整段 usage 归到该 session 最后一个 call
-//     （所以以 session 结束时刻的 model_hint 计价 —— 这是单模型简化）。
-//
-// 这样 By Model / By Tool / Shell / MCP / Activity 都能拿到合理数据；
-// 单 session 内只显示一个模型（没法分摊到多个）。
+//   - usage：codex 在 token_count.info 里同时给 `last_token_usage`（这次调用的 delta）
+//     和 `total_token_usage`（自 session 开始累积）。优先取 last_*；老格式没 last_* 时
+//     从 total_* 相对前一帧的差值还原。两个连续帧 total_tokens 相同 → 重复事件，跳过。
 fn read_turns(fp: &Path) -> Vec<Turn> {
     let file = match fs::File::open(fp) {
         Ok(f) => f,
@@ -1063,7 +1066,22 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
     let mut project_path: String = String::new();
     let mut session_id: String = String::new();
     let mut model_hint: String = String::new();
-    let mut last_usage = UsageSummary::default();
+
+    // pending 工具调用元数据：在两次 token_count 之间累积，token_count 来临时
+    // 落到那一帧的 CallRecord 上。这样 By Tool / Shell / MCP 仍然完整。
+    let mut pending_tools: Vec<String> = Vec::new();
+    let mut pending_bash: Vec<String> = Vec::new();
+    let mut pending_mcp: Vec<String> = Vec::new();
+    let mut pending_spawn = false;
+
+    // token_count 累积态 —— 用来判 dup（相同 total_tokens）和 last_token_usage 缺失
+    // 时的差值还原。None 哨兵：第一帧永远通过（如果一开始 total_tokens=0 的话，
+    // 用 0 初始化会把它误判为 dup）。
+    let mut prev_cum_total: Option<u64> = None;
+    let mut prev_input: u64 = 0;
+    let mut prev_cached: u64 = 0;
+    let mut prev_output: u64 = 0;
+    let mut prev_reasoning: u64 = 0;
 
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         if line.trim().is_empty() {
@@ -1097,8 +1115,6 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                         project_path = c.to_string();
                     }
                 }
-                // 兜底：极少数老格式直接在 session_meta 里写 model 字段。
-                // 现在的 codex 走 turn_context.model，下面有专门分支处理。
                 if model_hint.is_empty() {
                     if let Some(m) = payload.get("model").and_then(|x| x.as_str()) {
                         model_hint = m.to_string();
@@ -1106,8 +1122,6 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                 }
             }
             ("turn_context", _) => {
-                // 每个 turn 之前 codex 会写一个 turn_context，model 就在 payload.model。
-                // mid-session 切模型时也以最后一条为准。
                 if let Some(m) = payload.get("model").and_then(|x| x.as_str()) {
                     if !m.is_empty() {
                         model_hint = m.to_string();
@@ -1129,25 +1143,16 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                     calls: Vec::new(),
                     timestamp_ms: ts_ms,
                 });
+                // user_message 边界顺手清掉残留 pending（前一 turn 没收到 token_count
+                // 就被新 user 打断的场景，丢掉这些 pending 不算钱也不算 call）。
+                pending_tools.clear();
+                pending_bash.clear();
+                pending_mcp.clear();
+                pending_spawn = false;
             }
             ("event_msg", "agent_message") => {
-                push_call(
-                    &mut cur,
-                    &project_path,
-                    &session_id,
-                    ts_ms,
-                    CallRecord {
-                        model: model_hint.clone(),
-                        message_id: None,
-                        usage: UsageSummary::default(),
-                        cost_usd: 0.0,
-                        tools: Vec::new(),
-                        bash_commands: Vec::new(),
-                        mcp_servers: Vec::new(),
-                        has_plan_mode: false,
-                        has_agent_spawn: false,
-                    },
-                );
+                // assistant 文本回复 —— 不单独计 call，等下一个 token_count 把它和
+                // 工具调用一并并入一条 CallRecord 里。
             }
             ("response_item", "function_call") | ("response_item", "custom_tool_call") => {
                 let name = payload
@@ -1166,53 +1171,21 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                         other => other.to_string(),
                     })
                     .unwrap_or_default();
-                let mut bash_commands: Vec<String> = Vec::new();
-                let mut mcp_servers: Vec<String> = Vec::new();
                 if name == "shell" || name == "Bash" || name == "BashTool" {
                     if let Some(cmd) = shell_util::extract_first_command(&raw_args) {
-                        bash_commands.push(cmd);
+                        pending_bash.push(cmd);
                     }
                 }
                 if let Some(server) = shell_util::extract_mcp_server(&name) {
-                    mcp_servers.push(server);
+                    pending_mcp.push(server);
                 }
-                let spawn = matches!(name.as_str(), "Task" | "Agent" | "task_spawn");
-                push_call(
-                    &mut cur,
-                    &project_path,
-                    &session_id,
-                    ts_ms,
-                    CallRecord {
-                        model: model_hint.clone(),
-                        message_id: None,
-                        usage: UsageSummary::default(),
-                        cost_usd: 0.0,
-                        tools: vec![name],
-                        bash_commands,
-                        mcp_servers,
-                        has_plan_mode: false,
-                        has_agent_spawn: spawn,
-                    },
-                );
+                if matches!(name.as_str(), "Task" | "Agent" | "task_spawn") {
+                    pending_spawn = true;
+                }
+                pending_tools.push(name);
             }
             ("response_item", "web_search_call") => {
-                push_call(
-                    &mut cur,
-                    &project_path,
-                    &session_id,
-                    ts_ms,
-                    CallRecord {
-                        model: model_hint.clone(),
-                        message_id: None,
-                        usage: UsageSummary::default(),
-                        cost_usd: 0.0,
-                        tools: vec!["WebSearch".to_string()],
-                        bash_commands: Vec::new(),
-                        mcp_servers: Vec::new(),
-                        has_plan_mode: false,
-                        has_agent_spawn: false,
-                    },
-                );
+                pending_tools.push("WebSearch".to_string());
             }
             ("event_msg", "token_count") => {
                 let Some(info) = payload.get("info") else {
@@ -1224,22 +1197,101 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
                 let Some(tt) = info.get("total_token_usage") else {
                     continue;
                 };
-                last_usage = read_codex_total_usage(tt);
+                let cum_total = tt.get("total_tokens").and_then(Value::as_u64).unwrap_or(0);
+
+                // 同一 cumulative 重复出现 —— 跳过（codex 偶尔会重发；codeburn 同样处理）。
+                if let Some(prev) = prev_cum_total {
+                    if cum_total == prev {
+                        continue;
+                    }
+                }
+                prev_cum_total = Some(cum_total);
+
+                // 这一帧的 per-call 用量：优先 last_token_usage（如果上游写了），
+                // 否则用 cumulative 差值还原。
+                let last = info.get("last_token_usage");
+                let (in_t, cached_t, out_t, rea_t);
+                if let Some(l) = last.filter(|x| !x.is_null()) {
+                    in_t = l.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    cached_t = l
+                        .get("cached_input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    out_t = l.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    rea_t = l
+                        .get("reasoning_output_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                } else {
+                    let ti = tt.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    let tc = tt
+                        .get("cached_input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let to = tt.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    let tr = tt
+                        .get("reasoning_output_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    in_t = ti.saturating_sub(prev_input);
+                    cached_t = tc.saturating_sub(prev_cached);
+                    out_t = to.saturating_sub(prev_output);
+                    rea_t = tr.saturating_sub(prev_reasoning);
+                }
+                // 不管走 last_* 还是差值路径，prev_* 都按 cumulative 推进。
+                prev_input = tt
+                    .get("input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(prev_input);
+                prev_cached = tt
+                    .get("cached_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(prev_cached);
+                prev_output = tt
+                    .get("output_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(prev_output);
+                prev_reasoning = tt
+                    .get("reasoning_output_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(prev_reasoning);
+
+                if in_t + cached_t + out_t + rea_t == 0 {
+                    continue;
+                }
+                // codex `input_tokens` 含 cached —— 减出 uncached 部分喂给 aggregator
+                // （aggregator 期望 Anthropic 语义：input 不含 cache_read）
+                let uncached_in = in_t.saturating_sub(cached_t);
+                let usage = UsageSummary {
+                    input_tokens: uncached_in,
+                    output_tokens: out_t,
+                    cache_creation_input_tokens: 0,
+                    cache_creation_1h_input_tokens: 0,
+                    cache_read_input_tokens: cached_t,
+                    reasoning_output_tokens: rea_t,
+                    total: 0,
+                }
+                .finalize();
+
+                let mut call = CallRecord {
+                    model: model_hint.clone(),
+                    message_id: None,
+                    usage,
+                    cost_usd: 0.0,
+                    tools: std::mem::take(&mut pending_tools),
+                    bash_commands: std::mem::take(&mut pending_bash),
+                    mcp_servers: std::mem::take(&mut pending_mcp),
+                    has_plan_mode: false,
+                    has_agent_spawn: std::mem::replace(&mut pending_spawn, false),
+                };
+                call.cost_usd = pricing::cost_usd(&call.model, &call.usage);
+                push_call(&mut cur, &project_path, &session_id, ts_ms, call);
             }
             _ => {}
         }
     }
     if let Some(t) = cur {
         turns.push(t);
-    }
-    // 把累积 usage 灌到最后一个 call。如果完全没有 call，就丢弃 usage（前端不显示）。
-    if last_usage.total > 0 {
-        if let Some(last_turn) = turns.last_mut() {
-            if let Some(last_call) = last_turn.calls.last_mut() {
-                last_call.usage = last_usage;
-                last_call.cost_usd = pricing::cost_usd(&last_call.model, &last_call.usage);
-            }
-        }
     }
     turns
 }
@@ -1330,6 +1382,7 @@ fn read_codex_total_usage(t: &Value) -> UsageSummary {
         input_tokens: total_input.saturating_sub(cached),
         output_tokens: output,
         cache_creation_input_tokens: 0,
+        cache_creation_1h_input_tokens: 0,
         cache_read_input_tokens: cached,
         reasoning_output_tokens: reasoning,
         total: 0,
@@ -1434,6 +1487,7 @@ mod tests {
         // 回归：早期实现只看 session_meta.originator.model / .model；真实 codex JSONL 的
         // session_meta.originator 是字符串（"codex-tui"），model 字段不存在 → 全 session $0。
         // 现在 turn_context.payload.model 是真正的 model 源。
+        crate::stats::pricing::seed_test_prices();
         let p = write_temp(
             "codex-turn-context-model.jsonl",
             &[
@@ -1455,6 +1509,72 @@ mod tests {
             "expected non-zero cost, got {}",
             last_call.cost_usd
         );
+    }
+
+    #[test]
+    fn read_turns_counts_one_call_per_token_count_not_per_tool_invocation() {
+        // 回归：一个 turn 里 OpenAI 通常一次 API 响应同时返回多个 function_call /
+        // agent_message —— 那些是同一次 API 调用的 content blocks，**不是各自计费的**
+        // 独立调用。曾把每个 function_call 都算成一次 call，导致 Today 维度 calls 数
+        // 被放大到 ~3x（同一份 codex JSONL：49 个真实 token_count → 我们报 143 calls）。
+        // 期望：一个 turn 里 3 个 function_call + 1 个 agent_message + 1 个 token_count
+        // → 一条 CallRecord，且 tools/bash 全部归并到这条上。
+        crate::stats::pricing::seed_test_prices();
+        let p = write_temp(
+            "codex-one-call-per-token-count.jsonl",
+            &[
+                r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/tmp","originator":"codex-tui"}}"#,
+                r#"{"type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}"#,
+                r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls /tmp\"}"}}"#,
+                r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"pwd\"}"}}"#,
+                r#"{"type":"response_item","payload":{"type":"function_call","name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500,"reasoning_output_tokens":0,"total_tokens":1700},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500,"reasoning_output_tokens":0,"total_tokens":1700}}}}"#,
+            ],
+        );
+        let turns = read_turns(&p);
+        assert_eq!(turns.len(), 1, "expected exactly 1 turn");
+        let calls = &turns[0].calls;
+        assert_eq!(
+            calls.len(),
+            1,
+            "expected exactly 1 CallRecord (one per token_count), got {} — they're being counted per function_call again",
+            calls.len(),
+        );
+        let c = &calls[0];
+        assert_eq!(
+            c.tools.len(),
+            3,
+            "all 3 tool names should be folded into the call"
+        );
+        assert!(c.tools.contains(&"shell".to_string()));
+        assert!(c.tools.contains(&"read_file".to_string()));
+        assert_eq!(c.bash_commands.len(), 2, "both shell commands captured");
+        assert_eq!(c.usage.cache_read_input_tokens, 200);
+        assert_eq!(c.usage.input_tokens, 800, "uncached = 1000 - 200");
+        assert!(c.cost_usd > 0.0);
+    }
+
+    #[test]
+    fn read_turns_dedupes_consecutive_token_count_with_same_cumulative_total() {
+        // codex 偶尔会重发上一帧的 token_count（同一个 total_tokens 出现两次）。
+        // 我们必须只计一条 —— 否则 calls 会被多算，cost 会双倍。
+        crate::stats::pricing::seed_test_prices();
+        let p = write_temp(
+            "codex-dup-token-count.jsonl",
+            &[
+                r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/tmp"}}"#,
+                r#"{"type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":150},"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":150}}}}"#,
+                // 同样的 cumulative 重发一次 —— 必须跳过
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":150},"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":150}}}}"#,
+            ],
+        );
+        let turns = read_turns(&p);
+        let calls = &turns[0].calls;
+        assert_eq!(calls.len(), 1, "expected dedup to drop the second event");
     }
 
     #[test]

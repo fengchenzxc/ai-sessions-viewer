@@ -718,19 +718,42 @@ fn read_turns(fp: &Path) -> Vec<Turn> {
             .unwrap_or("")
             .to_string();
 
-        // tokens.{input,output,cached,thoughts} 直接映射；tool 字段加进 output 末尾
-        // —— UsageSummary 没有专门的 "tool tokens" 字段，少量并入 output 不会严重失真，
-        // pricing 看的是 input/output 两条主线。
-        let mut usage = UsageSummary::default();
-        if let Some(tk) = v.get("tokens") {
-            usage.input_tokens = tk.get("input").and_then(Value::as_u64).unwrap_or(0);
-            usage.output_tokens = tk.get("output").and_then(Value::as_u64).unwrap_or(0);
-            usage.cache_read_input_tokens = tk.get("cached").and_then(Value::as_u64).unwrap_or(0);
-            usage.reasoning_output_tokens = tk.get("thoughts").and_then(Value::as_u64).unwrap_or(0);
-            // tool tokens：折入 output（少量、avoid 凭空丢失）
-            usage.output_tokens += tk.get("tool").and_then(Value::as_u64).unwrap_or(0);
-            usage = usage.finalize();
+        // 一次"计费 API 调用"的判据（对齐 codeburn 的 parseSession）：
+        //   ① type=gemini ② 有 tokens 对象 ③ 有 model
+        // 同时具备时才认。streaming 子事件（toolCall 响应、thoughts-only 续帧）
+        // 通常缺 model 或 tokens，跳过 —— 不跳的话 calls 会比真实计费次数多 ~70%。
+        let tk = match v.get("tokens").filter(|t| t.is_object()) {
+            Some(t) if !model.is_empty() => t,
+            _ => continue,
+        };
+
+        // tokens.{input,output,cached,thoughts,tool} 语义（实测 + 对齐 codeburn）：
+        //   - input  = **包含** cached 的整段 prompt 大小（"totalInput"）
+        //              所以「按 input rate 计费」时必须减掉 cached，否则 cached
+        //              那部分会被 input rate + cache_read rate 双重计费，cost 翻倍。
+        //   - cached = prompt 命中缓存的 tokens 数，按 cache_read rate 计
+        //   - output = 模型生成的可见输出 tokens
+        //   - thoughts = 隐藏 chain-of-thought，跟 OpenAI 一样按 output rate 计
+        //   - tool   = 工具调用相关 tokens，并入 output（量很小，pricing 看 in/out）
+        let total_input = tk.get("input").and_then(Value::as_u64).unwrap_or(0);
+        let output = tk.get("output").and_then(Value::as_u64).unwrap_or(0);
+        let cached = tk.get("cached").and_then(Value::as_u64).unwrap_or(0);
+        let thoughts = tk.get("thoughts").and_then(Value::as_u64).unwrap_or(0);
+        let tool_t = tk.get("tool").and_then(Value::as_u64).unwrap_or(0);
+
+        // 全 0 token 行（典型来自 streaming 占位）—— 既无成本也不算 call。
+        if total_input == 0 && output == 0 && cached == 0 && thoughts == 0 {
+            continue;
         }
+
+        let mut usage = UsageSummary {
+            input_tokens: total_input.saturating_sub(cached), // freshInput = totalInput − cached
+            output_tokens: output.saturating_add(tool_t), // tool tokens 折入 output（codeburn 不算 tool，但量级 ~0，保留兼容）
+            cache_read_input_tokens: cached,
+            reasoning_output_tokens: thoughts, // pricing::cost_usd 已按 output rate 计这部分
+            ..Default::default()
+        };
+        usage = usage.finalize();
 
         // toolCalls：每个 {name, ...} 是一次调用名。
         // Gemini CLI 工具命名见 https://github.com/google-gemini/gemini-cli —— 主要工具有：
@@ -869,6 +892,7 @@ mod tests {
     fn read_turns_extracts_tokens_model_and_tools() {
         // 一条 user + 一条 gemini（带 tokens / model / toolCalls）—— 验证 read_turns 能
         // 把它折成 1 个 Turn / 1 个 CallRecord 并填好关键字段。
+        crate::stats::pricing::seed_test_prices();
         let tmp = std::env::temp_dir().join(format!("csv-gem-turns-{}.jsonl", now_millis()));
         let lines = [
             r#"{"sessionId":"abc","startTime":"2026-05-15T09:18:37.148Z","lastUpdated":"...","kind":"main"}"#,
@@ -885,7 +909,9 @@ mod tests {
         assert_eq!(turn.calls.len(), 1);
         let call = &turn.calls[0];
         assert_eq!(call.model, "gemini-2.5-flash");
-        assert_eq!(call.usage.input_tokens, 1000);
+        // 新语义（对齐 codeburn）：input_tokens = totalInput − cached
+        // = 1000 − 200 = 800，避免按 input rate 重复计 cached 那部分。
+        assert_eq!(call.usage.input_tokens, 800);
         // output 应该是 50 + tool(5) = 55
         assert_eq!(call.usage.output_tokens, 55);
         assert_eq!(call.usage.cache_read_input_tokens, 200);
@@ -899,6 +925,82 @@ mod tests {
         assert!(call.tools.iter().any(|t| t == "read_file"));
         assert!(call.tools.iter().any(|t| t == "run_shell_command"));
         assert_eq!(call.bash_commands, vec!["git".to_string()]);
+    }
+
+    /// Gemini CLI 的 streaming 子事件（toolCall 响应、thoughts-only 续帧）经常缺
+    /// `tokens` 或 `model`，它们不是独立计费的 API 调用 —— 必须跳过。
+    /// 之前我们对每个 `type=gemini` 都建一个 CallRecord，导致 Today/30d 的 calls
+    /// 数比 codeburn 高 ~70%，且空 record 把 input=0/output=0 混进汇总。
+    #[test]
+    fn read_turns_skips_gemini_events_without_tokens_or_model() {
+        crate::stats::pricing::seed_test_prices();
+        let tmp = std::env::temp_dir().join(format!("csv-gem-skip-{}.jsonl", now_millis()));
+        let lines = [
+            r#"{"sessionId":"abc","startTime":"2026-05-15T09:18:00.000Z","lastUpdated":"x","kind":"main"}"#,
+            r#"{"id":"u1","timestamp":"2026-05-15T09:19:00.000Z","type":"user","content":[{"text":"hi"}]}"#,
+            // ① 有 tokens 但没 model —— 跳过
+            r#"{"id":"g_noModel","timestamp":"2026-05-15T09:19:01.000Z","type":"gemini","tokens":{"input":100,"output":10}}"#,
+            // ② 有 model 但没 tokens —— 跳过（thoughts/toolCall 续帧）
+            r#"{"id":"g_noTokens","timestamp":"2026-05-15T09:19:02.000Z","type":"gemini","model":"gemini-2.5-flash","toolCalls":[{"name":"read_file"}]}"#,
+            // ③ 全 0 tokens —— 跳过（streaming 占位）
+            r#"{"id":"g_zero","timestamp":"2026-05-15T09:19:03.000Z","type":"gemini","model":"gemini-2.5-flash","tokens":{"input":0,"output":0,"cached":0,"thoughts":0}}"#,
+            // ④ 真实计费 —— 算
+            r#"{"id":"g_real","timestamp":"2026-05-15T09:19:04.000Z","type":"gemini","model":"gemini-2.5-flash","tokens":{"input":500,"output":20,"cached":100,"thoughts":5}}"#,
+        ];
+        std::fs::write(&tmp, lines.join("\n")).unwrap();
+        let turns = read_turns(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        assert_eq!(turns.len(), 1, "one user turn");
+        assert_eq!(
+            turns[0].calls.len(),
+            1,
+            "only the real billed event should become a CallRecord (got {})",
+            turns[0].calls.len()
+        );
+        // freshInput = 500 - 100 = 400
+        assert_eq!(turns[0].calls[0].usage.input_tokens, 400);
+        assert_eq!(turns[0].calls[0].usage.cache_read_input_tokens, 100);
+    }
+
+    /// 双重计费回归：`tokens.input` 是含 cached 的 totalInput，如果直接送进 cost_usd
+    /// 当 input 用，cached 那部分会被「input rate + cache_read rate」双重计费。
+    /// 这里 pin 死：纯 cached 大块 + 极小 fresh input 的 call 不应贵于「全是 cached、
+    /// 无 fresh input」的同等大小 call。
+    #[test]
+    fn read_turns_subtracts_cached_from_input_to_avoid_double_billing() {
+        crate::stats::pricing::seed_test_prices();
+        let tmp = std::env::temp_dir().join(format!("csv-gem-nodup-{}.jsonl", now_millis()));
+        // input=10000, cached=10000 → freshInput=0；只剩 cached 走 cache_read rate
+        let lines = [
+            r#"{"sessionId":"abc","startTime":"2026-05-15T09:18:00.000Z","lastUpdated":"x","kind":"main"}"#,
+            r#"{"id":"u1","timestamp":"2026-05-15T09:19:00.000Z","type":"user","content":[{"text":"hi"}]}"#,
+            r#"{"id":"g1","timestamp":"2026-05-15T09:19:01.000Z","type":"gemini","model":"gemini-2.5-flash","tokens":{"input":10000,"output":0,"cached":10000,"thoughts":0}}"#,
+        ];
+        std::fs::write(&tmp, lines.join("\n")).unwrap();
+        let turns = read_turns(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        let call = &turns[0].calls[0];
+        assert_eq!(
+            call.usage.input_tokens, 0,
+            "fresh input should be 0 (all cached)"
+        );
+        assert_eq!(call.usage.cache_read_input_tokens, 10000);
+        // cost 应该 == 10000 * cache_read_rate，不应 == 10000 * (input_rate + cache_read_rate)
+        let in_rate = crate::stats::pricing::lookup("gemini-2.5-flash")
+            .map(|c| c.input)
+            .unwrap_or(0.0);
+        let cr_rate = crate::stats::pricing::lookup("gemini-2.5-flash")
+            .map(|c| c.cache_read)
+            .unwrap_or(0.0);
+        let expected = 10000.0 * cr_rate;
+        let double_billed = 10000.0 * (in_rate + cr_rate);
+        assert!(
+            (call.cost_usd - expected).abs() < 1e-9,
+            "got ${} expected ${} (double-billed would be ${})",
+            call.cost_usd,
+            expected,
+            double_billed,
+        );
     }
 
     #[test]

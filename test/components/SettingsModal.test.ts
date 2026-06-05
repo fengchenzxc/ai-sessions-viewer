@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-// SettingsModal reads the app version and update info through the Tauri-backed
-// api module — stub it so the component can mount outside a Tauri shell.
 const { appVersionMock, checkUpdateMock } = vi.hoisted(() => ({
   appVersionMock: vi.fn(),
   checkUpdateMock: vi.fn(),
@@ -34,6 +32,7 @@ const factory = (props: Partial<Props> = {}) =>
   mount(SettingsModal, {
     props: { cacheBytes: 0, ...props } as Props,
     global: { directives: { tooltip: vTooltip } },
+    attachTo: document.body,
   })
 
 describe('SettingsModal', () => {
@@ -62,36 +61,58 @@ describe('SettingsModal', () => {
     expect(wrapper.emitted('close')).toHaveLength(2)
   })
 
-  it('renders the four languages and switches on click', async () => {
+  it('switches language via the custom dropdown', async () => {
     const wrapper = factory()
-    const langBtns = wrapper.findAll('.seg-wide button')
-    expect(langBtns).toHaveLength(4)
-    expect(langBtns[0].classes()).toContain('active') // English is current
-
-    await langBtns[1].trigger('click') // 简体中文
+    const dropdowns = wrapper.findAll('.set-dropdown-btn')
+    await dropdowns[0].trigger('click')
+    const items = wrapper.findAll('.set-dropdown-item')
+    expect(items.length).toBeGreaterThanOrEqual(4)
+    await items[1].trigger('click') // 简体中文
     expect(lang.value).toBe('zh')
   })
 
-  it('renders the theme dropdown and switches on change', async () => {
+  it('switches theme via the custom dropdown', async () => {
     const wrapper = factory()
-    const select = wrapper.find('.theme-select')
-    expect(select.exists()).toBe(true)
-    expect(select.findAll('option')).toHaveLength(5)
-
-    await select.setValue('dracula')
+    const dropdowns = wrapper.findAll('.set-dropdown-btn')
+    await dropdowns[1].trigger('click')
+    const items = wrapper.findAll('.set-dropdown-item')
+    // find the Dracula option (last one)
+    await items[items.length - 1].trigger('click')
     expect(theme.value).toBe('dracula')
   })
 
-  it('renders the three terminal apps and switches on click', async () => {
+  it('switches terminal app from the advanced tab dropdown', async () => {
     const wrapper = factory()
-    const terminalCards = wrapper.findAll('.terminal-card')
-    expect(terminalCards).toHaveLength(3)
+    await wrapper.findAll('.set-tabs button')[1].trigger('click')
+    expect(wrapper.find('.terminal-choice-group').exists()).toBe(false)
 
-    await terminalCards[0].trigger('click') // Warp
+    const terminalDropdown = wrapper.find('.terminal-dropdown .set-dropdown-btn')
+    expect(terminalDropdown.text()).toContain('Terminal.app')
+
+    await terminalDropdown.trigger('click')
+    const terminalItems = wrapper.findAll('.terminal-dropdown .set-dropdown-item')
+    expect(terminalItems).toHaveLength(3)
+
+    await terminalItems[0].trigger('click')
     expect(terminalApp.value).toBe('warp')
 
-    await terminalCards[2].trigger('click') // iTerm2
+    await terminalDropdown.trigger('click')
+    await wrapper.findAll('.terminal-dropdown .set-dropdown-item')[2].trigger('click')
     expect(terminalApp.value).toBe('iterm2')
+  })
+
+  it('localizes settings tabs and terminal description', async () => {
+    setLang('zh')
+    const wrapper = factory()
+    const tabs = wrapper.findAll('.set-tabs button')
+    expect(tabs[0].text()).toBe('通用')
+    expect(tabs[1].text()).toBe('高级')
+
+    await tabs[1].trigger('click')
+    expect(wrapper.text()).not.toContain('settings.tab.')
+    expect(wrapper.text()).not.toContain('settings.terminalDesc')
+    expect(wrapper.find('.terminal-dropdown').exists()).toBe(true)
+    expect(wrapper.text()).toContain('选择恢复或新建会话时打开的外部终端。')
   })
 
   it('loads the app version on mount', async () => {
@@ -106,7 +127,8 @@ describe('SettingsModal', () => {
     const wrapper = factory()
     await flushPromises()
 
-    await wrapper.findAll('.btn')[1].trigger('click')
+    const checkBtn = wrapper.find('.set-update-actions .btn')
+    await checkBtn.trigger('click')
     await flushPromises()
 
     expect(checkUpdateMock).toHaveBeenCalled()
@@ -118,7 +140,8 @@ describe('SettingsModal', () => {
     const wrapper = factory()
     await flushPromises()
 
-    await wrapper.findAll('.btn')[1].trigger('click')
+    const checkBtn = wrapper.find('.set-update-actions .btn')
+    await checkBtn.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('latest version')
@@ -129,7 +152,8 @@ describe('SettingsModal', () => {
     const wrapper = factory()
     await flushPromises()
 
-    await wrapper.findAll('.btn')[1].trigger('click')
+    const checkBtn = wrapper.find('.set-update-actions .btn')
+    await checkBtn.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('Update check failed')

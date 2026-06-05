@@ -8,6 +8,7 @@ import {
   selectMode,
   selectedTrash,
   trashSearch,
+  trashSort,
 } from '../../src/trashToolbar'
 import type { TrashItem } from '../../src/types'
 
@@ -97,6 +98,68 @@ describe('TrashView', () => {
       await restore.trigger('click')
       expect(wrapper.emitted('open')).toBeUndefined()
       expect(wrapper.emitted('restore')).toHaveLength(1)
+    })
+  })
+
+  describe('header actions', () => {
+    // 用 aria-label 找按钮，避免依赖 .list-head-actions 里的位置。
+    // 行内顺序：normal 模式 = [sort, select, Empty Trash]，select 模式 = [select-all, restore, cancel]
+    const findByLabel = (wrapper: ReturnType<typeof factory>, label: string) =>
+      wrapper.findAll('.list-head-actions .icon-btn').find((b) =>
+        b.attributes('aria-label')?.startsWith(label),
+      )!
+
+    it('toggles the time sort from the sort button (moved from TrashTopbar)', async () => {
+      const wrapper = factory([item({ trashFile: 'a' }), item({ trashFile: 'b' })])
+      expect(trashSort.value).toBe('recent')
+      await findByLabel(wrapper, 'Sorted by').trigger('click')
+      expect(trashSort.value).toBe('oldest')
+    })
+
+    it('hides the sort and select buttons unless there are 2+ items', () => {
+      expect(
+        factory([]).find('.list-head-actions .icon-btn[aria-label^="Sorted"]').exists(),
+      ).toBe(false)
+      expect(
+        factory([item({ trashFile: 'a' })]).find(
+          '.list-head-actions .icon-btn[aria-label^="Select"]',
+        ).exists(),
+      ).toBe(false)
+      expect(
+        factory([item({ trashFile: 'a' }), item({ trashFile: 'b' })]).find(
+          '.list-head-actions .icon-btn[aria-label^="Sorted"]',
+        ).exists(),
+      ).toBe(true)
+    })
+
+    it('enters select mode from the select button', async () => {
+      const wrapper = factory([item({ trashFile: 'a' }), item({ trashFile: 'b' })])
+      await findByLabel(wrapper, 'Select multiple').trigger('click')
+      expect(selectMode.value).toBe(true)
+    })
+
+    it('select-all toggles the whole visible set', async () => {
+      selectMode.value = true
+      const wrapper = factory([item({ trashFile: 'a' }), item({ trashFile: 'b' })])
+      await findByLabel(wrapper, 'Select all').trigger('click')
+      expect(selectedTrash.value.size).toBe(2)
+      await findByLabel(wrapper, 'Deselect all').trigger('click')
+      expect(selectedTrash.value.size).toBe(0)
+    })
+
+    it('emits batch-restore when restore is clicked with a selection', async () => {
+      selectMode.value = true
+      selectedTrash.value = new Set(['a'])
+      const wrapper = factory([item({ trashFile: 'a' })])
+      await findByLabel(wrapper, 'Restore selected').trigger('click')
+      expect(wrapper.emitted('batch-restore')).toHaveLength(1)
+    })
+
+    it('exits select mode from the cancel button', async () => {
+      selectMode.value = true
+      const wrapper = factory([item({ trashFile: 'a' })])
+      await findByLabel(wrapper, 'Exit selection').trigger('click')
+      expect(selectMode.value).toBe(false)
     })
   })
 

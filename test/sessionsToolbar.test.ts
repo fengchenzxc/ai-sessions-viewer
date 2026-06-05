@@ -4,7 +4,6 @@ import {
   resetSessionsToolbar,
   sessionSearch,
   sessionSort,
-  sessionWithIdOnly,
   sessionsFilterActive,
 } from '../src/sessionsToolbar'
 import type { SessionMeta } from '../src/types'
@@ -71,17 +70,6 @@ describe('filterSessions', () => {
     expect(filterSessions(items).map((s) => s.path)).toEqual(['a', 'c', 'b'])
   })
 
-  it('keeps only sessions with an id when withIdOnly is on', () => {
-    sessionWithIdOnly.value = true
-    expect(filterSessions(items).map((s) => s.path)).toEqual(['a', 'c'])
-  })
-
-  it('combines id filter and sort', () => {
-    sessionWithIdOnly.value = true
-    sessionSort.value = 'oldest'
-    expect(filterSessions(items).map((s) => s.path)).toEqual(['c', 'a'])
-  })
-
   it('does not mutate the input array', () => {
     sessionSort.value = 'oldest'
     const input = [...items]
@@ -109,24 +97,17 @@ describe('sessionsFilterActive', () => {
     sessionSort.value = 'size'
     expect(sessionsFilterActive.value).toBe(true)
   })
-
-  it('is true while the with-id filter is on', () => {
-    sessionWithIdOnly.value = true
-    expect(sessionsFilterActive.value).toBe(true)
-  })
 })
 
 describe('resetSessionsToolbar', () => {
   it('restores every field to its default', () => {
     sessionSearch.value = 'q'
     sessionSort.value = 'messages'
-    sessionWithIdOnly.value = true
 
     resetSessionsToolbar()
 
     expect(sessionSearch.value).toBe('')
     expect(sessionSort.value).toBe('recent')
-    expect(sessionWithIdOnly.value).toBe(false)
     expect(sessionsFilterActive.value).toBe(false)
   })
 })

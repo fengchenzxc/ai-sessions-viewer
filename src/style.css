@@ -66,7 +66,6 @@
   --diff-added: #00a240;
   --diff-removed: #e02e2a;
   --skill: #751ed9;
-  /* macOS 原生字体栈：优先使用系统 SF / PingFang 渲染。 */
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
     'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
   font-feature-settings: 'cv11', 'ss01', 'ss03';
@@ -644,6 +643,48 @@ button {
 .sidebar-top .sidebar-sub {
   padding: 8px 4px 2px;
   letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+.sidebar-sub-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 与项目数同行的小刷新按钮 —— 比顶部 .top-btn 更细，跟 sub-label 视觉权重一致。 */
+.sidebar-sub-refresh {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--text-mute);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sidebar-sub-refresh:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.sidebar-sub-refresh:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.sidebar-sub-refresh svg {
+  width: 13px;
+  height: 13px;
+}
+.sidebar-sub-refresh.spinning svg {
+  animation: spin 0.9s linear infinite;
 }
 
 /* ---------- Agent badge (used in trash list) ---------- */
@@ -910,6 +951,65 @@ button {
   animation: spin 0.7s linear infinite;
 }
 
+/* ---------- Topbar "More" dropdown (export history + live pricing) ----------
+   .top-btn 是绝对触发器，dropdown 锚在它下方。结构、token 同 .ct-scope-menu
+   保持一致 —— 这样 dark/light 主题切自动跟随，且和已有 sort 菜单视觉同款。 */
+.topbar-more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.topbar-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.topbar-more-item {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 7px 10px 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.12s;
+}
+.topbar-more-item:hover {
+  background: var(--surface-hover);
+}
+.topbar-more-item.active {
+  background: var(--surface-active);
+}
+.topbar-more-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.topbar-more-icon svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+}
+
 /* ---------- Window blurred (mirror macOS / Codex inactive look) ----------
    Content (titles, body text, chat) stays sharp; only chrome accents soften:
    brand color drains to neutral, top-bar / hover affordances fade. Same
@@ -976,11 +1076,22 @@ button {
   flex: 1;
   min-width: 0;
 }
-/* 会话列表头部右上角的操作按钮组（新建会话 / 刷新） */
+/* 会话列表头部右上角的操作按钮组（新建会话 / 刷新）。
+   align-items: center 让 `.ct-search-count`（"N selected" 文字）和按钮在同一水平基线上 ——
+   gap 默认按基线对齐，文字会比按钮的盒高微微偏上。 */
 .list-head-actions {
   display: flex;
+  align-items: center;
   gap: 2px;
   flex-shrink: 0;
+}
+/* 多选模式下，把 "选择控制"（select-all / cancel）和 "对选中项的动作"（export / delete /
+   restore）用一条细竖线分开。1px 宽，高度跟随按钮（22-24px），用 border 颜色不抢戏。 */
+.list-head-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 /* ---------- Session list ---------- */
@@ -1829,6 +1940,118 @@ button {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
+/* Mermaid 图占位符（待 mermaid.js 渲染）+ 渲染失败兜底。
+ * 渲染前 / 失败时露出源码，让用户至少看得到原文；渲染成功后 mermaid.render()
+ * 把 innerHTML 换成 <svg>，外层这个 .md-mermaid 容器保留做样式钩子。 */
+.md-mermaid {
+  display: block;
+  margin: 10px 0;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow-x: auto;
+  text-align: center;
+}
+.md-mermaid[data-rendered] svg {
+  max-width: 100%;
+  height: auto;
+}
+.md-mermaid-source {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: pre;
+  overflow-x: auto;
+  text-align: left;
+}
+.md-mermaid-error {
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 50%, var(--border));
+}
+.md-mermaid-errmsg {
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+  margin-bottom: 8px;
+  text-align: left;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* GFM 表格 —— 用 design tokens 适配 light/dark；外框圆角带细边，表头 surface-2 灰底，
+ * 数据行 hover 高亮。父容器是 .text-run（white-space:pre-wrap），table 内单独 normal。
+ * .md-table-wrap 提供横向滚动：列多 / 单元格长时整张表横滚而不是把消息气泡撑爆。 */
+.md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0;
+  /* iOS / macOS 弹性滚动顺滑些；纵向不滚（auto 比 scroll 干净，无滚动条占位）。 */
+  -webkit-overflow-scrolling: touch;
+  /* 外圆角放这里，让滚动条压在 wrap 边缘而不是 table 边框上。 */
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  /* 默认全局 scrollbar 在表格里看着太重 —— 这里压窄到 7px + transparent track，
+   * 浅色模式下 thumb 用 --border-strong（gray-500）就刚好不显眼；
+   * Firefox 用 scrollbar-* 等价配色。之前看着接近黑色是因为 wrap 内没 padding，
+   * thumb 紧贴底 border 视觉权重过强。 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.md-table-wrap::-webkit-scrollbar {
+  height: 7px;
+  width: 7px;
+}
+.md-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+.md-table-wrap::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 999px;
+  border: 0;
+  background-clip: padding-box;
+}
+.md-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 38%, transparent);
+}
+.md-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  background: var(--surface);
+}
+.md-table thead {
+  background: var(--surface-2);
+}
+.md-table th,
+.md-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+.md-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.md-table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+.md-table code {
+  font-size: 12px;
+}
+
 /* ---------- Thinking / tool blocks ---------- */
 .block-card {
   margin: 8px 0;
@@ -1999,6 +2222,14 @@ details[open] > .block-summary > .chev {
   box-shadow: 0 0 0 0 currentColor;
   animation: live-pulse 1.8s ease-out infinite;
 }
+
+/* 顶栏 Resume 按钮的 disabled 态：保留位置但视觉变弱、禁用 hover */
+.chat-head .icon-btn.disabled,
+.chat-head .icon-btn[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 @keyframes live-pulse {
   0%   { box-shadow: 0 0 0 0   color-mix(in srgb, currentColor 70%, transparent); }
   70%  { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor  0%, transparent); }
@@ -2407,11 +2638,25 @@ details[open] > .block-summary > .chev {
   width: 460px;
   padding: 16px 18px 18px;
 }
+.set-tabs {
+  margin-top: 10px;
+  padding: 2px;
+  background: var(--set-tabs-bg, hsl(0 0% 91%));
+  border-radius: 8px;
+  display: inline-flex;
+}
+.theme-dark .set-tabs,
+.theme-dracula .set-tabs {
+  --set-tabs-bg: hsl(0 0% 16%);
+}
+.set-tabs button {
+  min-width: 72px;
+}
 .set-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 14px;
 }
 .set-section {
   padding: 12px 0 14px;
@@ -2468,44 +2713,83 @@ details[open] > .block-summary > .chev {
   align-items: center;
 }
 
-.theme-select-wrap {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 5px 10px;
-  border: 1px solid color-mix(in srgb, var(--border-strong) 42%, transparent);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
-  color: var(--text);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent),
-    0 1px 2px color-mix(in srgb, #000 10%, transparent);
-  backdrop-filter: blur(18px) saturate(1.25);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+/* Settings custom dropdown — Geist-style menu, replaces native <select> */
+.set-dropdown-wrap {
+  position: relative;
+  margin-left: auto;
 }
-.theme-select-wrap:focus-within {
-  border-color: var(--border-strong);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent),
-    0 0 0 3px var(--accent-soft);
-}
-.theme-select {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
+.set-dropdown-btn {
+  appearance: none;
   background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px 3px 8px;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.12s, border-color 0.12s;
 }
-.theme-select option {
-  color: #111;
-  background: #fff;
+.set-dropdown-btn:hover,
+.set-dropdown-btn.active {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+.set-dropdown-chev {
+  width: 11px !important;
+  height: 11px !important;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+.set-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 60;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.set-dropdown-item {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 7px 10px 7px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.12s;
+}
+.set-dropdown-item:hover {
+  background: var(--surface-hover);
+}
+.set-dropdown-check {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.set-dropdown-check svg {
+  width: 13px !important;
+  height: 13px !important;
+  color: var(--text);
 }
 .theme-swatch {
   width: 26px;
@@ -2518,6 +2802,57 @@ details[open] > .block-summary > .chev {
   letter-spacing: -0.02em;
   border: 1px solid var(--border);
   flex-shrink: 0;
+}
+.theme-swatch-sm {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+  border-radius: 5px;
+}
+/* Toggle switch row */
+.set-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.set-toggle-row + .set-toggle-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.set-toggle-label {
+  font-size: 12px;
+  color: var(--text);
+}
+.set-toggle-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--border-strong);
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.set-toggle-track.on {
+  background: var(--accent, #3b82f6);
+}
+.set-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 0.2s;
+}
+.set-toggle-track.on .set-toggle-thumb {
+  transform: translateX(14px);
+}
+.set-toggle-hint {
+  margin-top: 4px;
+  margin-bottom: 0;
 }
 .theme-swatch-light,
 .theme-swatch-system {
@@ -2541,50 +2876,71 @@ details[open] > .block-summary > .chev {
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 8px;
 }
-.theme-card,
-.terminal-card {
+.theme-card {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 6px 8px;
+  gap: 7px;
+  padding: 14px 6px 12px;
   border: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   transition: background 0.12s, color 0.12s, border-color 0.12s,
     box-shadow 0.12s;
 }
-.theme-card:hover,
-.terminal-card:hover {
+.theme-card:hover {
   background: var(--surface-hover);
   color: var(--text);
 }
-.theme-card.active,
-.terminal-card.active {
+.theme-card.active {
   background: var(--accent-soft);
   color: var(--text);
   border-color: var(--border-strong);
   box-shadow: 0 0 0 1px var(--border-strong) inset;
 }
 .theme-card-ic {
+  width: 18px !important;
+  height: 18px !important;
+  color: inherit;
+}
+.theme-card-label {
+  letter-spacing: -0.005em;
+}
+
+.terminal-dropdown {
+  min-width: 170px;
+}
+.terminal-dropdown-btn {
+  width: 100%;
+  justify-content: space-between;
+}
+.terminal-dropdown-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-dropdown-ic,
+.terminal-dropdown-item-ic {
   width: 14px !important;
   height: 14px !important;
   color: inherit;
   flex-shrink: 0;
 }
-.theme-card-label {
-  letter-spacing: -0.005em;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.terminal-dropdown .set-dropdown-menu {
+  min-width: 100%;
+}
+.terminal-dropdown .set-dropdown-item {
+  padding-right: 12px;
+}
+.set-section .set-toggle-hint {
+  margin-bottom: 0;
 }
 
 .codex-toggle-grid {
@@ -3746,4 +4102,296 @@ details[open] > .block-summary > .chev {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* ---------- PricingView ----------
+   3 段（Claude / Codex / Gemini）模型价格表。布局：每行一个 CSS Grid，
+   model 名占左 fr，4 列价格定宽右对齐。配色完全 token 化，dark/light 自动切。
+   .pricing-scroll 自己是滚动容器，且 position:relative —— sticky 工具栏 + jumpTo
+   按 section.offsetTop 跳都依赖它作为定位参考系。 */
+/* PricingView 顶层包裹 —— 继承 view-layer 的 flex 列布局，list-head + 主体上下叠。 */
+.pricing-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pricing-scroll {
+  padding: 0 16px 24px;
+  position: relative;
+}
+/* 工具栏（统计行 + 锚点 chip）顶到滚动容器上沿；滚动时常驻可见。
+   背景与 scroll-area 一致 —— 滚动条上来时不漏底色。 */
+.pricing-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding: 8px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.pricing-anchors {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.pricing-anchor {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.12s, color 0.12s;
+  font-variant-numeric: tabular-nums;
+}
+.pricing-anchor:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.pricing-anchor.active {
+  background: var(--surface-active);
+  color: var(--text);
+  font-weight: 500;
+}
+.pricing-anchor-ic {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pricing-anchor-ic svg {
+  width: 14px;
+  height: 14px;
+}
+.pricing-anchor-count {
+  font-size: 10.5px;
+  color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+}
+.pricing-anchor.active .pricing-anchor-count {
+  color: var(--text-dim);
+}
+
+/* 搜索框：风格与 .ct-search 同款，但形态独立（PricingView 内嵌在 sticky toolbar）。
+   回车提交 —— 不实时 filter，避免重复 reflow 200 行表格。 */
+.pricing-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  max-width: 360px;
+  padding: 4px 8px 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.pricing-search:focus-within,
+.pricing-search.active {
+  border-color: var(--accent, var(--text-dim));
+}
+.pricing-search-ic {
+  display: inline-flex;
+  color: var(--text-mute);
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.pricing-search-ic svg {
+  width: 13px;
+  height: 13px;
+}
+.pricing-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 2px;
+}
+.pricing-search-input::placeholder {
+  color: var(--text-mute);
+}
+.pricing-search-clear {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pricing-search-clear:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.pricing-search-clear svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 搜索 / 加载 / 单位提示的 meta 行 —— 紧贴 sticky toolbar 下方。 */
+.pricing-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-mute);
+  padding: 0 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+.pricing-meta .dot {
+  opacity: 0.5;
+}
+.pricing-meta-filter {
+  color: var(--text-dim);
+}
+.pricing-family {
+  margin-bottom: 18px;
+}
+.pricing-family-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+.pricing-family-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pricing-family-count {
+  font-size: 11px;
+  color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+}
+.pricing-family-empty {
+  padding: 10px 4px;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+.pricing-table {
+  display: flex;
+  flex-direction: column;
+}
+.pricing-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 110px 110px 110px 110px;
+  gap: 12px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+  align-items: center;
+  font-size: 12.5px;
+}
+.pricing-row:last-child {
+  border-bottom: 0;
+}
+.pricing-row:hover:not(.pricing-row-head) {
+  background: var(--surface-hover);
+}
+.pricing-row-head {
+  font-size: 11px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 8px;
+  padding-bottom: 6px;
+  font-weight: 500;
+}
+.pricing-cell-model {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pricing-cell-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.pricing-row-head .pricing-cell-num,
+.pricing-row-head .pricing-cell-model {
+  color: var(--text-mute);
+  font-family: inherit;
+}
+/* lucide spinner —— Loading 占位用的连续旋转。 */
+.pricing-scroll .spin,
+.empty .big .spin {
+  animation: spin 0.9s linear infinite;
+}
+
+/* ---------- JSON syntax highlight（tool_use args / JSON tool_result）----------
+ *  色板挑了 light/dark 通用、对比足够但又不过分跳的中间色：
+ *    key   = brand-ish 蓝紫，区分容易扫的"字段名"
+ *    string = 偏绿
+ *    num   = 偏紫
+ *    bool  = 偏红橙（醒目，因为 true/false 经常是关键变更）
+ *    null  = mute（视觉权重低，跟 undefined 一样次要）
+ *  `<pre>` 默认字体已经是 mono，这里只染色不改字体。 */
+.lang-json .json-key { color: hsl(214 65% 42%); }
+.lang-json .json-string { color: hsl(140 50% 32%); }
+.lang-json .json-num { color: hsl(280 55% 45%); }
+.lang-json .json-bool { color: hsl(14 75% 45%); font-weight: 500; }
+.lang-json .json-null { color: var(--text-mute); font-style: italic; }
+:root.theme-dark .lang-json .json-key { color: hsl(214 80% 70%); }
+:root.theme-dark .lang-json .json-string { color: hsl(140 50% 65%); }
+:root.theme-dark .lang-json .json-num { color: hsl(280 70% 75%); }
+:root.theme-dark .lang-json .json-bool { color: hsl(14 75% 65%); }
+
+/* Unified diff 文本高亮（Bash 跑 `git diff` / 工具吐 patch 等 tool_result）。
+ * structured patch 走 DiffBlock；这里只染色不重排，外层 <pre> 负责字体 / 滚动。
+ *   diff-file / diff-meta = 头部元数据（文件名 / index 行）
+ *   diff-hunk            = `@@ -m,n +p,q @@`
+ *   diff-add / diff-del  = 行级 +/- ，背景用 add/del 半透明色（不画满 pre 背景）
+ *   diff-ctx             = 上下文行（normal 颜色） */
+.lang-diff { display: block; }
+.lang-diff .diff-file { color: var(--text); font-weight: 600; }
+.lang-diff .diff-meta { color: var(--text-mute); }
+.lang-diff .diff-hunk { color: hsl(214 50% 45%); font-weight: 500; }
+.lang-diff .diff-add {
+  color: hsl(140 55% 32%);
+  background: color-mix(in srgb, hsl(140 55% 45%) 12%, transparent);
+  display: block;
+}
+.lang-diff .diff-del {
+  color: hsl(0 65% 42%);
+  background: color-mix(in srgb, hsl(0 65% 50%) 12%, transparent);
+  display: block;
+}
+.lang-diff .diff-ctx { color: var(--text); }
+:root.theme-dark .lang-diff .diff-hunk { color: hsl(214 70% 70%); }
+:root.theme-dark .lang-diff .diff-add {
+  color: hsl(140 55% 70%);
+  background: color-mix(in srgb, hsl(140 55% 50%) 18%, transparent);
+}
+:root.theme-dark .lang-diff .diff-del {
+  color: hsl(0 70% 72%);
+  background: color-mix(in srgb, hsl(0 70% 55%) 18%, transparent);
 }

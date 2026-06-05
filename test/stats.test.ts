@@ -46,6 +46,7 @@ function emptyStats(): AgentStats {
       inputTokens: 0,
       outputTokens: 0,
       cacheCreationInputTokens: 0,
+      cacheCreation1hInputTokens: 0,
       cacheReadInputTokens: 0,
       reasoningOutputTokens: 0,
       total: 0,
@@ -121,7 +122,7 @@ describe('useStatsStream', () => {
   it('drops events whose requestId does not match the active stream', async () => {
     const wrapper = mount(Harness)
     const stream = getStream(wrapper)
-    await stream.start('claude', 'all')
+    await stream.start('claude', 'months6')
     await flushPromises()
     const args = invokeMock.mock.calls.find((c) => c[0] === 'start_agent_stats')![1] as {
       requestId: number
@@ -141,7 +142,7 @@ describe('useStatsStream', () => {
   it('surfaces error event onto the error ref', async () => {
     const wrapper = mount(Harness)
     const stream = getStream(wrapper)
-    await stream.start('all', 'all')
+    await stream.start('all', 'months6')
     await flushPromises()
     const rid = (
       invokeMock.mock.calls.find((c) => c[0] === 'start_agent_stats')![1] as {
@@ -172,7 +173,7 @@ describe('useStatsStream', () => {
   it('unmount triggers a cancel_stats request', async () => {
     const wrapper = mount(Harness)
     const stream = getStream(wrapper)
-    await stream.start('all', 'all')
+    await stream.start('all', 'months6')
     await flushPromises()
     wrapper.unmount()
     await flushPromises()

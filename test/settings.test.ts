@@ -226,10 +226,10 @@ describe('stats scope / range persistence', () => {
     return import('../src/settings')
   }
 
-  it('defaults to all agents + all time when no preference is stored', async () => {
+  it('defaults to all agents + last 6 months when no preference is stored', async () => {
     const mod = await freshStats({})
     expect(mod.statsScope.value).toBe('all')
-    expect(mod.statsRange.value).toBe('all')
+    expect(mod.statsRange.value).toBe('months6')
   })
 
   it('restores a valid persisted scope and range', async () => {
@@ -238,10 +238,14 @@ describe('stats scope / range persistence', () => {
     expect(mod.statsRange.value).toBe('days7')
   })
 
-  it('ignores invalid persisted values and falls back to defaults', async () => {
-    const mod = await freshStats({ scope: 'bogus', range: 'forever' })
+  // 老用户 localStorage 里可能存的 'all'（已废弃）；这里 pin 死回退到 months6
+  // 而不是再写 'all'，否则 startAgentStats 会被后端拒掉。
+  it('migrates legacy "all" range to months6 (and rejects bogus values)', async () => {
+    const mod = await freshStats({ scope: 'bogus', range: 'all' })
     expect(mod.statsScope.value).toBe('all')
-    expect(mod.statsRange.value).toBe('all')
+    expect(mod.statsRange.value).toBe('months6')
+    const mod2 = await freshStats({ range: 'forever' })
+    expect(mod2.statsRange.value).toBe('months6')
   })
 
   it('writes back to localStorage when the ref changes', async () => {
